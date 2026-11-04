@@ -1,0 +1,28 @@
+{
+  "name": "auth-hub-backend",
+  "version": "1.0.0",
+  "description": "Centralized Identity, OAuth2/SSO & Multi-Project RBAC Engine",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "build:all": "npm run build && cd ../frontend && npm run build"
+  },
+  "keywords": ["auth", "sso", "oauth2", "jwt", "rbac", "iam"],
+  "author": "Josa Pratama",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.8.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}
+

@@ -1,0 +1,15 @@
+{
+  "name": "auth-hub-workspace",
+  "version": "1.0.0",
+  "description": "Centralized Identity, Single Sign-On (OAuth2/JWT), and Multi-Project RBAC Engine for Mini VPS & Ecosystem Projects",
+  "scripts": {
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build && cd ../backend && npm run build",
+    "start": "cd backend && npm start"
+  },
+  "keywords": ["sso", "iam", "oauth2", "jwt", "rbac", "auth-hub"],
+  "author": "Josa Pratama",
+  "license": "MIT"
+}
+

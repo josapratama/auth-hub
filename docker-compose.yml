@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  auth-hub:
+    build: .
+    container_name: auth-hub
+    restart: unless-stopped
+    ports:
+      - "4100:4100"
+    volumes:
+      - auth-hub-data:/app/data
+    environment:
+      - PORT=4100
+      - NODE_ENV=production
+      - AUTH_HUB_DB_FILE=/app/data/auth-store.json
+      - JWT_SECRET=${JWT_SECRET:-authhub-secret-key-change-in-production}
+      - AUTH_HUB_ISSUER=${AUTH_HUB_ISSUER:-auth-hub.josapratama.com}
+
+volumes:
+  auth-hub-data:
+
