@@ -86,7 +86,10 @@ export interface AuditLog {
     | "CLIENT_SECRET_ROTATED"
     | "CLIENT_CREATED"
     | "CLIENT_DELETED"
-    | "USER_CREATED";
+    | "USER_CREATED"
+    | "USER_REGISTERED"
+    | "USER_STATUS_TOGGLED"
+    | "SETTINGS_UPDATED";
   userEmail: string;
   clientSlug?: string;
   ipAddress: string;
@@ -94,7 +97,15 @@ export interface AuditLog {
   details: string;
 }
 
+export interface AuthHubSettings {
+  allowPublicRegistration: boolean;
+  requireAdminApproval: boolean;
+  defaultMemberRole: "viewer" | "member";
+  publicClientSlugs: string[];
+}
+
 export interface AuthHubSchema {
+  settings?: AuthHubSettings;
   clients: OAuthClient[];
   users: AuthUser[];
   authCodes: AuthCodeRecord[];
@@ -334,85 +345,22 @@ function createInitialData(): AuthHubSchema {
       createdAt: now,
       updatedAt: now,
     },
-    {
-      id: "usr_dev_team",
-      email: "developer@minihost.local",
-      username: "devteam",
-      name: "Tim Developer",
-      passwordHash: devPassHash,
-      globalRole: "admin",
-      appRoles: {
-        minihost: "viewer",
-        "polyglot-hub": "editor",
-        uploadbox: "editor",
-        wabridge: "admin",
-        "nexus-chat": "editor",
-        "uml-flow": "editor",
-        "arsip-digital": "viewer",
-        "irma-iryani": "none",
-        portfolio: "editor",
-      },
-      twoFactorEnabled: false,
-      twoFactorSecret: "DEV2FASECRETKEY2026",
-      isActive: true,
-      lastLoginAt: now,
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: "usr_client_irma",
-      email: "client@minihost.local",
-      username: "client_partner",
-      name: "Partner & Klien Eksternal",
-      passwordHash: clientPassHash,
-      globalRole: "member",
-      appRoles: {
-        minihost: "none",
-        "polyglot-hub": "none",
-        uploadbox: "viewer",
-        wabridge: "none",
-        "nexus-chat": "viewer",
-        "uml-flow": "viewer",
-        "arsip-digital": "editor",
-        "irma-iryani": "admin",
-        portfolio: "viewer",
-      },
-      twoFactorEnabled: false,
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    },
   ];
 
-  const auditLogs: AuditLog[] = [
-    {
-      id: "aud_init_1",
-      timestamp: now,
-      event: "SSO_LOGIN_SUCCESS",
-      userEmail: "josapratama@minihost.local",
-      clientSlug: "minihost",
-      ipAddress: "192.168.100.184",
-      status: "success",
-      details: "Superadmin SSO session initialized for Mini VPS Panel",
-    },
-    {
-      id: "aud_init_2",
-      timestamp: now,
-      event: "OAUTH_TOKEN_EXCHANGED",
-      userEmail: "josapratama@minihost.local",
-      clientSlug: "polyglot-hub",
-      ipAddress: "192.168.100.184",
-      status: "success",
-      details: "Issued HS256 JWT token with role 'superadmin' for Polyglot Hub",
-    },
-  ];
+  const settings: AuthHubSettings = {
+    allowPublicRegistration: true,
+    requireAdminApproval: false,
+    defaultMemberRole: "member",
+    publicClientSlugs: ["nexus-chat", "polyglot-hub", "portfolio", "uploadbox", "uml-flow"],
+  };
 
   return {
+    settings,
     clients,
     users,
     authCodes: [],
     sessions: [],
-    auditLogs,
+    auditLogs: [],
   };
 }
 
@@ -432,7 +380,34 @@ class AuthHubDatabase {
     }
     try {
       const raw = fs.readFileSync(DB_FILE, "utf-8");
-      return JSON.parse(raw);
+      const parsed: AuthHubSchema = JSON.parse(raw);
+
+      // Remove any legacy dummy users if present
+      parsed.users = (parsed.users || []).filter(
+        (u) =>
+          u.id !== "usr_dev_team" &&
+          u.id !== "usr_client_irma" &&
+          !u.email.includes("developer@minihost") &&
+          !u.email.includes("client@minihost")
+      );
+
+      // Remove initial dummy audit logs
+      parsed.auditLogs = (parsed.auditLogs || []).filter(
+        (a) => a.id !== "aud_init_1" && a.id !== "aud_init_2"
+      );
+
+      if (!parsed.settings) {
+        parsed.settings = {
+          allowPublicRegistration: true,
+          requireAdminApproval: false,
+          defaultMemberRole: "member",
+          publicClientSlugs: ["nexus-chat", "polyglot-hub", "portfolio", "uploadbox", "uml-flow"],
+        };
+      }
+
+      this.data = parsed;
+      this.save();
+      return parsed;
     } catch {
       const initial = createInitialData();
       return initial;
@@ -442,6 +417,30 @@ class AuthHubDatabase {
   public save() {
     ensureDirectoryExistence(DB_FILE);
     fs.writeFileSync(DB_FILE, JSON.stringify(this.data, null, 2), "utf-8");
+  }
+
+  // ─── Settings ──────────────────────────────────────────────
+  public getSettings(): AuthHubSettings {
+    if (!this.data.settings) {
+      this.data.settings = {
+        allowPublicRegistration: true,
+        requireAdminApproval: false,
+        defaultMemberRole: "member",
+        publicClientSlugs: ["nexus-chat", "polyglot-hub", "portfolio", "uploadbox", "uml-flow"],
+      };
+      this.save();
+    }
+    return this.data.settings;
+  }
+
+  public updateSettings(partial: Partial<AuthHubSettings>): AuthHubSettings {
+    const current = this.getSettings();
+    this.data.settings = {
+      ...current,
+      ...partial,
+    };
+    this.save();
+    return this.data.settings;
   }
 
   // ─── Clients ───────────────────────────────────────────────
@@ -576,6 +575,56 @@ class AuthHubDatabase {
     this.data.users.push(newUser);
     this.save();
     const { passwordHash, ...safeUser } = newUser;
+    return safeUser;
+  }
+
+  public registerUser(payload: {
+    email: string;
+    username: string;
+    name: string;
+    password: string;
+  }): { user: Omit<AuthUser, "passwordHash">; requireApproval: boolean } {
+    const settings = this.getSettings();
+    const now = new Date().toISOString();
+    const defaultRoles: Record<string, AppRole> = {};
+
+    for (const c of this.data.clients) {
+      if (settings.publicClientSlugs.includes(c.slug)) {
+        defaultRoles[c.slug] = "viewer";
+      } else {
+        defaultRoles[c.slug] = "none";
+      }
+    }
+
+    const isActive = !settings.requireAdminApproval;
+    const newUser: AuthUser = {
+      id: `usr_${crypto.randomBytes(4).toString("hex")}`,
+      email: payload.email.trim().toLowerCase(),
+      username: payload.username.trim().toLowerCase(),
+      name: payload.name.trim(),
+      passwordHash: hashPassword(payload.password),
+      globalRole: "member",
+      appRoles: defaultRoles,
+      twoFactorEnabled: false,
+      twoFactorSecret: crypto.randomBytes(10).toString("hex").toUpperCase(),
+      isActive,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.data.users.push(newUser);
+    this.save();
+    const { passwordHash, ...safeUser } = newUser;
+    return { user: safeUser, requireApproval: settings.requireAdminApproval };
+  }
+
+  public toggleUserActive(userId: string): Omit<AuthUser, "passwordHash"> | undefined {
+    const user = this.data.users.find((u) => u.id === userId);
+    if (!user) return undefined;
+    user.isActive = !user.isActive;
+    user.updatedAt = new Date().toISOString();
+    this.save();
+    const { passwordHash, ...safeUser } = user;
     return safeUser;
   }
 

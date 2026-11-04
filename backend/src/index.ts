@@ -148,9 +148,22 @@ app.get("/api/health", (_req: Request, res: Response) => {
   res.json({
     status: "ok",
     service: "AuthHub Centralized Identity & SSO Engine",
-    version: "1.1.0",
-    security: "Hardened with RBAC, JWT Admin Auth & Rate-Limiting",
+    version: "1.2.0",
+    security: "Hardened with RBAC, JWT Admin Auth, Self-Registration & Rate-Limiting",
     timestamp: new Date().toISOString(),
+  });
+});
+
+// ─── Public Settings (For Login/Registration UI Check) ────────
+app.get("/api/public-settings", (_req: Request, res: Response) => {
+  const settings = db.getSettings();
+  res.json({
+    allowPublicRegistration: settings.allowPublicRegistration,
+    requireAdminApproval: settings.requireAdminApproval,
+    publicClients: db
+      .getClients()
+      .filter((c) => settings.publicClientSlugs.includes(c.slug))
+      .map((c) => ({ slug: c.slug, name: c.name, icon: c.icon })),
   });
 });
 
@@ -316,6 +329,7 @@ app.get("/api/overview", requireAdminAuth, (_req: Request, res: Response) => {
   }));
   const sessions = db.getSessions();
   const auditLogs = db.getAuditLogs();
+  const settings = db.getSettings();
 
   const activeSessionsCount = sessions.filter(
     (s) => !s.revoked && new Date(s.expiresAt).getTime() > Date.now()
@@ -328,11 +342,30 @@ app.get("/api/overview", requireAdminAuth, (_req: Request, res: Response) => {
       activeSessions: activeSessionsCount,
       totalAuditEvents: auditLogs.length,
     },
+    settings,
     clients,
     users,
     sessions,
     auditLogs,
   });
+});
+
+// ─── System Policy & Settings Management (Protected) ──────────
+app.get("/api/settings", requireAdminAuth, (_req: Request, res: Response) => {
+  res.json({ settings: db.getSettings() });
+});
+
+app.put("/api/settings", requireAdminAuth, (req: Request, res: Response) => {
+  const updated = db.updateSettings(req.body);
+  const admin = (req as any).adminUser;
+  db.addAuditLog({
+    event: "SETTINGS_UPDATED",
+    userEmail: admin?.email || "admin",
+    ipAddress: getClientIp(req),
+    status: "warning",
+    details: `Admin ${admin?.name || "admin"} updated AuthHub security, registration, and RBAC policies`,
+  });
+  res.json({ settings: updated });
 });
 
 // ─── OAuth2 / Connected Projects Management (Protected) ────────
@@ -508,6 +541,38 @@ app.delete("/api/users/:id", requireAdminAuth, (req: Request, res: Response) => 
   res.json({ success: true });
 });
 
+app.put(
+  "/api/users/:id/toggle-status",
+  requireAdminAuth,
+  (req: Request, res: Response) => {
+    const userId = String(req.params.id);
+    if (userId === "usr_josa_root") {
+      return res
+        .status(403)
+        .json({ error: "Cannot deactivate primary root admin" });
+    }
+    const updated = db.toggleUserActive(userId);
+    if (!updated) return res.status(404).json({ error: "User not found" });
+
+    if (!updated.isActive) {
+      db.revokeAllUserSessions(userId);
+    }
+
+    const admin = (req as any).adminUser;
+    db.addAuditLog({
+      event: "USER_STATUS_TOGGLED",
+      userEmail: admin?.email || "admin",
+      ipAddress: getClientIp(req),
+      status: updated.isActive ? "success" : "warning",
+      details: `Admin ${admin?.name || "admin"} ${
+        updated.isActive ? "mengaktifkan kembali" : "menonaktifkan (suspend)"
+      } akun ${updated.email}`,
+    });
+
+    res.json({ user: updated });
+  }
+);
+
 // ─── Sessions & Global Revocation (Kill-Switch) (Protected) ───
 app.post("/api/sessions/:id/revoke", requireAdminAuth, (req: Request, res: Response) => {
   const sid = String(req.params.id);
@@ -549,6 +614,93 @@ app.post("/api/users/:id/revoke-all", requireAdminAuth, (req: Request, res: Resp
 // ═══════════════════════════════════════════════════════════════
 //  STANDARD OAUTH2 / SSO / JWT ENDPOINTS FOR ALL ECOSYSTEM APPS
 // ═══════════════════════════════════════════════════════════════
+
+/**
+ * 0. Public Self-Registration for End-Users
+ * POST /api/v1/auth/register
+ */
+app.post("/api/v1/auth/register", (req: Request, res: Response) => {
+  const settings = db.getSettings();
+  if (!settings.allowPublicRegistration) {
+    return res.status(403).json({
+      error: "Pendaftaran publik sedang dinonaktifkan oleh Administrator AuthHub.",
+    });
+  }
+
+  const ip = getClientIp(req);
+  const rateLimitKey = `reg_${ip}`;
+  const rateCheck = isRateLimited(rateLimitKey, 10, 60 * 60 * 1000);
+  if (rateCheck.limited) {
+    return res.status(429).json({
+      error: "Terlalu banyak permintaan pendaftaran dari IP ini. Silakan coba lagi nanti.",
+    });
+  }
+
+  const { email, username, name, password } = req.body;
+  if (!email || !username || !name || !password) {
+    return res.status(400).json({
+      error: "Nama lengkap, email, username, dan password wajib diisi.",
+    });
+  }
+
+  const cleanPass = String(password);
+  if (cleanPass.length < 6) {
+    return res.status(400).json({
+      error: "Password minimal harus 6 karakter.",
+    });
+  }
+
+  const cleanEmail = String(email).trim().toLowerCase();
+  const cleanUsername = String(username)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "");
+
+  if (!cleanEmail.includes("@") || !cleanEmail.includes(".")) {
+    return res.status(400).json({ error: "Format alamat email tidak valid." });
+  }
+
+  if (cleanUsername.length < 3) {
+    return res.status(400).json({
+      error: "Username minimal 3 karakter (hanya huruf kecil, angka, dan underscore).",
+    });
+  }
+
+  if (
+    db.findUserByIdentifier(cleanEmail) ||
+    db.findUserByIdentifier(cleanUsername)
+  ) {
+    return res.status(409).json({
+      error: "Alamat email atau username tersebut sudah terdaftar.",
+    });
+  }
+
+  const { user, requireApproval } = db.registerUser({
+    email: cleanEmail,
+    username: cleanUsername,
+    name: String(name).trim(),
+    password: cleanPass,
+  });
+
+  db.addAuditLog({
+    event: "USER_REGISTERED",
+    userEmail: user.email,
+    ipAddress: ip,
+    status: "success",
+    details: `User baru '${user.name}' (${user.email}) mendaftar mandiri via Portal SSO${
+      requireApproval ? " (Menunggu Persetujuan Admin)" : ""
+    }`,
+  });
+
+  res.status(201).json({
+    success: true,
+    requireApproval,
+    message: requireApproval
+      ? "Pendaftaran berhasil! Akun Anda sedang menunggu persetujuan Administrator sebelum dapat digunakan login."
+      : "Pendaftaran berhasil! Akun Anda siap digunakan untuk Single Sign-On di seluruh ekosistem project.",
+    user,
+  });
+});
 
 /**
  * 1. Direct SSO Authorize (Login + Consent + Issue OAuth2 Authorization Code)
