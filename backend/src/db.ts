@@ -22,6 +22,17 @@ export interface OAuthClient {
   updatedAt: string;
 }
 
+export interface WebAuthnCredential {
+  id: string; // Base64URL string of credential ID
+  publicKey: string; // Base64 representation of public key Uint8Array
+  counter: number;
+  transports?: string[];
+  deviceType?: string;
+  backedUp?: boolean;
+  name?: string; // Friendly name: "YubiKey 5 NFC (Hardware Token)"
+  createdAt: string;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -34,6 +45,7 @@ export interface AuthUser {
   appRoles: Record<string, AppRole>;
   twoFactorEnabled: boolean;
   twoFactorSecret?: string;
+  webAuthnCredentials?: WebAuthnCredential[];
   phoneWhatsapp?: string;
   telegramChatId?: string;
   isActive: boolean;
@@ -89,7 +101,11 @@ export interface AuditLog {
     | "USER_CREATED"
     | "USER_REGISTERED"
     | "USER_STATUS_TOGGLED"
-    | "SETTINGS_UPDATED";
+    | "SETTINGS_UPDATED"
+    | "WEBAUTHN_KEY_REGISTERED"
+    | "WEBAUTHN_KEY_DELETED"
+    | "WEBAUTHN_LOGIN_SUCCESS"
+    | "WEBAUTHN_LOGIN_FAILED";
   userEmail: string;
   clientSlug?: string;
   ipAddress: string;
@@ -663,6 +679,50 @@ class AuthHubDatabase {
       return true;
     }
     return false;
+  }
+
+  // ─── WebAuthn / YubiKey Hardware Credentials ─────────────────
+
+  public addWebAuthnCredential(userId: string, cred: WebAuthnCredential): boolean {
+    const user = this.data.users.find((u) => u.id === userId);
+    if (!user) return false;
+    if (!user.webAuthnCredentials) {
+      user.webAuthnCredentials = [];
+    }
+    user.webAuthnCredentials.push(cred);
+    user.updatedAt = new Date().toISOString();
+    this.save();
+    return true;
+  }
+
+  public updateWebAuthnCounter(userId: string, credId: string, newCounter: number): boolean {
+    const user = this.data.users.find((u) => u.id === userId);
+    if (!user || !user.webAuthnCredentials) return false;
+    const cred = user.webAuthnCredentials.find((c) => c.id === credId);
+    if (!cred) return false;
+    cred.counter = newCounter;
+    user.updatedAt = new Date().toISOString();
+    this.save();
+    return true;
+  }
+
+  public removeWebAuthnCredential(userId: string, credId: string): boolean {
+    const user = this.data.users.find((u) => u.id === userId);
+    if (!user || !user.webAuthnCredentials) return false;
+    const before = user.webAuthnCredentials.length;
+    user.webAuthnCredentials = user.webAuthnCredentials.filter((c) => c.id !== credId);
+    if (user.webAuthnCredentials.length < before) {
+      user.updatedAt = new Date().toISOString();
+      this.save();
+      return true;
+    }
+    return false;
+  }
+
+  public findUserByCredentialId(credId: string): AuthUser | undefined {
+    return this.data.users.find((u) =>
+      u.webAuthnCredentials?.some((c) => c.id === credId)
+    );
   }
 
   // ─── OAuth2 Authorization Codes ────────────────────────────

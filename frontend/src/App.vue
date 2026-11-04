@@ -17,7 +17,7 @@
           <div class="flex items-center gap-2">
             <h1 class="text-base sm:text-lg font-extrabold tracking-tight text-white">Auth<span class="text-indigo-400">Hub</span></h1>
             <span class="hidden xs:inline-flex px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              SSO &bull; OAuth2 &bull; RBAC
+              SSO &bull; OAuth2 &bull; YubiKey PIN
             </span>
           </div>
           <p class="text-[10px] sm:text-[11px] text-slate-400 truncate max-w-[200px] sm:max-w-none">Pusat Identitas &amp; Single Sign-On Seluruh Project Ekosistem</p>
@@ -25,7 +25,17 @@
       </div>
 
       <!-- Right Actions (Authenticated) -->
-      <div v-if="isLoggedIn" class="flex items-center gap-2 sm:gap-3">
+      <div v-if="isLoggedIn" class="flex items-center gap-2 sm:gap-2.5">
+        <button
+          @click="openWebAuthnModal"
+          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-violet-500/15 hover:bg-violet-500/25 border border-violet-500/30 text-xs font-bold text-violet-300 transition-colors cursor-pointer"
+          title="Kelola YubiKey & Hardware Security Key"
+        >
+          <span>🛡️</span>
+          <span class="hidden sm:inline">YubiKey PIN</span>
+          <span v-if="myWebAuthnKeys.length > 0" class="px-1.5 py-0.2 rounded-full bg-violet-500/30 text-[10px]">{{ myWebAuthnKeys.length }}</span>
+        </button>
+
         <button
           @click="activeTab = 'simulator'"
           class="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-xs font-bold text-emerald-300 transition-colors cursor-pointer"
@@ -71,7 +81,7 @@
       <div v-else class="flex items-center gap-2">
         <span class="px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 text-slate-300 text-xs font-medium flex items-center gap-1.5">
           <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-          <span>SSO Unified Gateway</span>
+          <span>FIDO2 &bull; YubiKey PIN Ready</span>
         </span>
       </div>
     </header>
@@ -232,8 +242,8 @@
                     >
                       {{ u.globalRole }}
                     </span>
-                    <span v-if="u.isActive === false" class="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold">
-                      PENDING
+                    <span v-if="u.webAuthnKeys && u.webAuthnKeys.length" class="px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-300 text-[9px] font-bold" title="YubiKey Aktif">
+                      🛡️ {{ u.webAuthnKeys.length }}
                     </span>
                   </div>
                 </button>
@@ -392,7 +402,7 @@
           <div>
             <h2 class="text-base font-bold text-white">Matriks Hak Akses (RBAC) &amp; Pengguna</h2>
             <p class="text-xs text-slate-400">
-              Kelola status akun (Aktif / Suspend), 2FA, dan perizinan tiap aplikasi: <code>superadmin</code>, <code>admin</code>, <code>editor</code>, <code>viewer</code>, atau <code>none</code> (blokir).
+              Kelola status akun (Aktif / Suspend), 2FA, YubiKey PIN, dan perizinan tiap aplikasi: <code>superadmin</code>, <code>admin</code>, <code>editor</code>, <code>viewer</code>, atau <code>none</code> (blokir).
             </p>
           </div>
 
@@ -425,7 +435,7 @@
                 <tr class="border-b border-slate-800 bg-slate-900/90 text-slate-300">
                   <th class="p-3.5 font-bold min-w-[210px] sticky left-0 bg-slate-900 z-10">Pengguna SSO</th>
                   <th class="p-3.5 font-bold text-center min-w-[110px]">Status Akun</th>
-                  <th class="p-3.5 font-bold text-center min-w-[110px]">Keamanan 2FA</th>
+                  <th class="p-3.5 font-bold text-center min-w-[110px]">Keamanan Kunci</th>
                   <th
                     v-for="c in clients"
                     :key="c.id"
@@ -490,20 +500,35 @@
                     </div>
                   </td>
 
-                  <!-- 2FA TOTP Toggle -->
-                  <td class="p-3.5 text-center">
-                    <button
-                      @click="toggle2FA(u.id)"
-                      class="px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer"
-                      :class="
-                        u.twoFactorEnabled
-                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
-                          : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
-                      "
-                    >
-                      {{ u.twoFactorEnabled ? '🔒 2FA On' : '🔓 2FA Off' }}
-                    </button>
-                    <div v-if="u.twoFactorEnabled && u.currentTotpDemo" class="text-[10px] font-mono text-emerald-400 mt-1">
+                  <!-- Security: 2FA & YubiKey -->
+                  <td class="p-3.5 text-center space-y-1">
+                    <div class="flex items-center justify-center gap-1">
+                      <button
+                        @click="toggle2FA(u.id)"
+                        class="px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-all cursor-pointer"
+                        :class="
+                          u.twoFactorEnabled
+                            ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                            : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
+                        "
+                        :title="u.twoFactorEnabled ? 'TOTP 2FA Aktif' : 'TOTP 2FA Nonaktif'"
+                      >
+                        {{ u.twoFactorEnabled ? '🔒 2FA' : '🔓 Non-2FA' }}
+                      </button>
+
+                      <span
+                        class="px-2 py-0.5 rounded-lg text-[10px] font-bold border"
+                        :class="
+                          (u.webAuthnKeys && u.webAuthnKeys.length) || (u.webAuthnCredentials && u.webAuthnCredentials.length)
+                            ? 'bg-violet-500/20 border-violet-500/40 text-violet-300'
+                            : 'bg-slate-900 border-slate-800 text-slate-500'
+                        "
+                        :title="((u.webAuthnKeys && u.webAuthnKeys.length) || 0) + ' YubiKey FIDO2 terdaftar'"
+                      >
+                        🛡️ {{ ((u.webAuthnKeys && u.webAuthnKeys.length) || (u.webAuthnCredentials && u.webAuthnCredentials.length) || 0) }} Key
+                      </span>
+                    </div>
+                    <div v-if="u.twoFactorEnabled && u.currentTotpDemo" class="text-[9px] font-mono text-emerald-400">
                       OTP: {{ u.currentTotpDemo }}
                     </div>
                   </td>
@@ -596,10 +621,10 @@
 
             <!-- Controls row -->
             <div class="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/80 text-xs">
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-1.5">
                 <button
                   @click="toggle2FA(u.id)"
-                  class="px-2.5 py-1 rounded-lg font-bold border transition-all text-[11px]"
+                  class="px-2 py-1 rounded-lg font-bold border transition-all text-[10px]"
                   :class="
                     u.twoFactorEnabled
                       ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
@@ -608,10 +633,15 @@
                 >
                   {{ u.twoFactorEnabled ? '🔒 2FA' : '🔓 Non-2FA' }}
                 </button>
+                <span
+                  class="px-2 py-1 rounded-lg text-[10px] font-bold border bg-violet-500/15 border-violet-500/30 text-violet-300"
+                >
+                  🛡️ {{ ((u.webAuthnKeys && u.webAuthnKeys.length) || (u.webAuthnCredentials && u.webAuthnCredentials.length) || 0) }} Key
+                </span>
                 <button
                   v-if="u.id !== 'usr_josa_root'"
                   @click="toggleUserStatus(u.id)"
-                  class="px-2.5 py-1 rounded-lg border text-[11px] font-semibold"
+                  class="px-2 py-1 rounded-lg border text-[10px] font-semibold"
                   :class="u.isActive !== false ? 'border-amber-500/30 text-amber-300 bg-amber-500/10' : 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10'"
                 >
                   {{ u.isActive !== false ? 'Suspend' : 'Aktifkan' }}
@@ -621,9 +651,9 @@
               <div class="flex items-center gap-1.5">
                 <button
                   @click="revokeAllForUser(u.id)"
-                  class="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-300 text-[10px] font-bold"
+                  class="px-2 py-1 rounded-lg bg-amber-500/15 text-amber-300 text-[10px] font-bold"
                 >
-                  Kill Session
+                  Kill
                 </button>
                 <button
                   v-if="u.id !== 'usr_josa_root'"
@@ -873,7 +903,7 @@
       </section>
 
       <!-- ══════════════════════════════════════════════════════════════════ -->
-      <!-- TAB 5: SETTINGS & REGISTRATION POLICY (NEW)                        -->
+      <!-- TAB 5: SETTINGS & REGISTRATION POLICY                              -->
       <!-- ══════════════════════════════════════════════════════════════════ -->
       <section v-if="activeTab === 'settings'" class="space-y-6 max-w-4xl">
         <div class="space-y-1">
@@ -1075,78 +1105,152 @@
 
           <!-- ─── SUB-VIEW 1: LOGIN FORM ─── -->
           <template v-if="authPortalTab === 'login'">
-            <!-- Error Alert Banner -->
-            <div v-if="loginError" class="p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300 flex items-start gap-2.5">
-              <span class="text-base shrink-0">⚠️</span>
-              <div class="space-y-1">
-                <p class="font-bold">Gagal Masuk</p>
-                <p class="leading-relaxed">{{ loginError }}</p>
-              </div>
-            </div>
-
-            <!-- Login Form -->
-            <form @submit.prevent="handleAdminLogin" class="space-y-4">
-              <div class="space-y-1.5">
-                <label class="text-xs font-bold text-slate-300">Email atau Username SSO</label>
-                <input
-                  v-model="loginForm.identifier"
-                  type="text"
-                  required
-                  autocomplete="username"
-                  placeholder="josapratama@minihost.local"
-                  class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/80 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all"
-                />
-              </div>
-
-              <div class="space-y-1.5">
-                <label class="text-xs font-bold text-slate-300">Password</label>
-                <input
-                  v-model="loginForm.password"
-                  type="password"
-                  required
-                  autocomplete="current-password"
-                  placeholder="••••••••"
-                  class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/80 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all"
-                />
-              </div>
-
-              <!-- 2FA TOTP Code (If required) -->
-              <div v-if="loginRequire2fa" class="space-y-1.5 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30">
-                <label class="text-xs font-bold text-amber-300 flex items-center justify-between">
-                  <span>Kode 2FA Authenticator</span>
-                  <span v-if="loginDemoTotp" class="font-mono text-[11px] text-amber-400">Demo Code: {{ loginDemoTotp }}</span>
-                </label>
-                <input
-                  v-model="loginForm.totpCode"
-                  type="text"
-                  maxlength="6"
-                  placeholder="6-digit code"
-                  class="w-full px-3.5 py-2 rounded-xl bg-slate-900/90 border border-amber-500/40 text-amber-300 text-center font-mono tracking-widest text-base focus:outline-none focus:border-amber-400"
-                />
-              </div>
-
-              <button
-                type="submit"
-                :disabled="loginLoading"
-                class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 via-violet-600 to-indigo-600 hover:from-indigo-500 hover:to-violet-500 text-white text-sm font-bold shadow-lg shadow-indigo-500/25 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-              >
-                <span v-if="loginLoading" class="animate-spin text-base">⏳</span>
-                <span v-else>🛡️</span>
-                <span>{{ loginLoading ? 'Memverifikasi...' : 'Masuk ke AuthHub' }}</span>
-              </button>
-            </form>
-
-            <!-- Quick Fill Root Admin -->
-            <div class="pt-2 border-t border-slate-800 text-center">
+            <!-- Login Method Switcher: Password vs YubiKey PIN -->
+            <div class="flex items-center gap-1.5 p-1 rounded-xl bg-slate-950/80 border border-slate-800 text-xs">
               <button
                 type="button"
-                @click="fillDemoRootAdmin"
-                class="text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors inline-flex items-center gap-1.5 cursor-pointer"
+                @click="loginMode = 'password'"
+                class="flex-1 py-1.5 rounded-lg font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                :class="loginMode === 'password' ? 'bg-indigo-600/40 text-white border border-indigo-500/40' : 'text-slate-400 hover:text-white'"
               >
-                <span>⚡</span>
-                <span>Isi Akun Root Superadmin (josapratama@minihost.local)</span>
+                <span>🔑 Password &amp; 2FA</span>
+              </button>
+              <button
+                type="button"
+                @click="loginMode = 'yubikey'"
+                class="flex-1 py-1.5 rounded-lg font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                :class="loginMode === 'yubikey' ? 'bg-gradient-to-r from-violet-600/50 to-emerald-600/50 text-white border border-violet-500/50' : 'text-slate-400 hover:text-white'"
+              >
+                <span>🛡️ YubiKey (PIN)</span>
               </button>
             </div>
+
+            <!-- MODE A: PASSWORD LOGIN -->
+            <template v-if="loginMode === 'password'">
+              <!-- Error Alert Banner -->
+              <div v-if="loginError" class="p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300 flex items-start gap-2.5">
+                <span class="text-base shrink-0">⚠️</span>
+                <div class="space-y-1">
+                  <p class="font-bold">Gagal Masuk</p>
+                  <p class="leading-relaxed">{{ loginError }}</p>
+                </div>
+              </div>
+
+              <!-- Login Form -->
+              <form @submit.prevent="handleAdminLogin" class="space-y-4">
+                <div class="space-y-1.5">
+                  <label class="text-xs font-bold text-slate-300">Email atau Username SSO</label>
+                  <input
+                    v-model="loginForm.identifier"
+                    type="text"
+                    required
+                    autocomplete="username"
+                    placeholder="josapratama@minihost.local"
+                    class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/80 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all"
+                  />
+                </div>
+
+                <div class="space-y-1.5">
+                  <label class="text-xs font-bold text-slate-300">Password</label>
+                  <input
+                    v-model="loginForm.password"
+                    type="password"
+                    required
+                    autocomplete="current-password"
+                    placeholder="••••••••"
+                    class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/80 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all"
+                  />
+                </div>
+
+                <!-- 2FA TOTP Code (If required) -->
+                <div v-if="loginRequire2fa" class="space-y-1.5 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30">
+                  <label class="text-xs font-bold text-amber-300 flex items-center justify-between">
+                    <span>Kode 2FA Authenticator</span>
+                    <span v-if="loginDemoTotp" class="font-mono text-[11px] text-amber-400">Demo Code: {{ loginDemoTotp }}</span>
+                  </label>
+                  <input
+                    v-model="loginForm.totpCode"
+                    type="text"
+                    maxlength="6"
+                    placeholder="6-digit code"
+                    class="w-full px-3.5 py-2 rounded-xl bg-slate-900/90 border border-amber-500/40 text-amber-300 text-center font-mono tracking-widest text-base focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  :disabled="loginLoading"
+                  class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 via-violet-600 to-indigo-600 hover:from-indigo-500 hover:to-violet-500 text-white text-sm font-bold shadow-lg shadow-indigo-500/25 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  <span v-if="loginLoading" class="animate-spin text-base">⏳</span>
+                  <span v-else>🛡️</span>
+                  <span>{{ loginLoading ? 'Memverifikasi...' : 'Masuk ke AuthHub' }}</span>
+                </button>
+              </form>
+
+              <!-- Quick Fill Root Admin -->
+              <div class="pt-2 border-t border-slate-800 text-center">
+                <button
+                  type="button"
+                  @click="fillDemoRootAdmin"
+                  class="text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>⚡</span>
+                  <span>Isi Akun Root Superadmin (josapratama@minihost.local)</span>
+                </button>
+              </div>
+            </template>
+
+            <!-- MODE B: YUBIKEY PIN AUTHENTICATION -->
+            <template v-else>
+              <div class="space-y-4">
+                <div class="p-4 rounded-2xl bg-gradient-to-r from-violet-950/40 via-slate-900/90 to-emerald-950/30 border border-violet-500/30 space-y-2">
+                  <div class="flex items-center gap-2.5">
+                    <span class="text-2xl">🛡️</span>
+                    <div>
+                      <h3 class="text-xs font-bold text-white">Autentikasi Hardware YubiKey (FIDO2)</h3>
+                      <p class="text-[11px] text-slate-400">Proteksi tingkat tinggi dengan User PIN &amp; sensor sentuh fisik.</p>
+                    </div>
+                  </div>
+                  <p class="text-[11px] text-slate-300 leading-relaxed">
+                    Colokkan perangkat YubiKey Anda (USB / NFC). Ketika browser memunculkan prompt keamanan, masukkan <strong>User PIN YubiKey</strong> Anda dan sentuh sensor logam.
+                  </p>
+                </div>
+
+                <!-- Error Alert -->
+                <div v-if="yubikeyError" class="p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300 flex items-start gap-2.5">
+                  <span class="text-base shrink-0">⚠️</span>
+                  <div class="space-y-0.5">
+                    <p class="font-bold">Autentikasi YubiKey Gagal</p>
+                    <p class="leading-relaxed">{{ yubikeyError }}</p>
+                  </div>
+                </div>
+
+                <!-- Optional Identifier -->
+                <div class="space-y-1.5">
+                  <label class="text-xs font-bold text-slate-300">Email atau Username SSO</label>
+                  <input
+                    v-model="yubikeyIdentifier"
+                    type="text"
+                    placeholder="josapratama@minihost.local"
+                    class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/80 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20"
+                  />
+                  <p class="text-[10px] text-slate-400">Masukkan akun Anda yang telah mendaftarkan YubiKey.</p>
+                </div>
+
+                <!-- YubiKey Trigger Button -->
+                <button
+                  type="button"
+                  @click="handleYubikeyLogin"
+                  :disabled="yubikeyLoading"
+                  class="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-violet-600 via-indigo-600 to-emerald-600 hover:from-violet-500 hover:to-emerald-500 text-white text-sm font-bold shadow-lg shadow-violet-500/25 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  <span v-if="yubikeyLoading" class="animate-spin text-base">⏳</span>
+                  <span v-else class="text-lg">🔐</span>
+                  <span>{{ yubikeyLoading ? 'Menunggu PIN & Sentuhan YubiKey...' : 'Sentuh YubiKey & Masukkan PIN' }}</span>
+                </button>
+              </div>
+            </template>
           </template>
 
           <!-- ─── SUB-VIEW 2: SELF-REGISTRATION FORM ─── -->
@@ -1269,6 +1373,110 @@
       </div>
     </main>
 
+    <!-- Modal: YubiKey & Hardware Keys Management -->
+    <div
+      v-if="showWebAuthnModal"
+      class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
+    >
+      <div class="glass-card rounded-3xl max-w-lg w-full p-6 sm:p-7 space-y-5 border border-violet-500/40 bg-[#0d1322]/95 shadow-2xl relative">
+        <div class="flex items-start justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-violet-500/20 border border-violet-500/40 flex items-center justify-center text-xl">
+              🛡️
+            </div>
+            <div>
+              <h3 class="text-base font-bold text-white">Kelola Hardware Key (YubiKey + PIN)</h3>
+              <p class="text-xs text-slate-400">FIDO2 / WebAuthn Hardware Token dengan Proteksi PIN</p>
+            </div>
+          </div>
+          <button @click="showWebAuthnModal = false" class="text-slate-400 hover:text-white text-lg cursor-pointer">&times;</button>
+        </div>
+
+        <div class="p-3.5 rounded-2xl bg-indigo-950/40 border border-indigo-500/20 text-xs text-slate-300 space-y-1">
+          <p class="font-bold text-indigo-300">💡 Standar Keamanan FIDO2 User Verification:</p>
+          <p class="leading-relaxed">
+            Setiap kunci YubiKey diproteksi dengan <strong>Hardware PIN</strong> mandiri. Saat pendaftaran maupun login, Anda akan diminta memasukkan PIN pada dialog browser lalu menyentuh fisik YubiKey.
+          </p>
+        </div>
+
+        <!-- Registered Keys List -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between text-xs font-bold text-slate-300">
+            <span>Daftar Kunci Terdaftar:</span>
+            <span class="text-violet-400 font-mono">{{ myWebAuthnKeys.length }} Terpasang</span>
+          </div>
+
+          <div v-if="myWebAuthnKeys.length === 0" class="p-6 rounded-2xl bg-slate-900/60 border border-dashed border-slate-800 text-center text-xs text-slate-400 space-y-1">
+            <p>Belum ada YubiKey yang didaftarkan pada akun ini.</p>
+            <p class="text-[11px] text-slate-500">Daftarkan YubiKey Anda di bawah untuk mengaktifkan login cepat &amp; aman.</p>
+          </div>
+
+          <div v-else class="space-y-2 max-h-48 overflow-y-auto pr-1">
+            <div
+              v-for="k in myWebAuthnKeys"
+              :key="k.id"
+              class="p-3 rounded-xl bg-slate-900/90 border border-slate-800 flex items-center justify-between gap-3 text-xs"
+            >
+              <div class="space-y-0.5 truncate">
+                <div class="flex items-center gap-2">
+                  <span class="font-bold text-white truncate">{{ k.name }}</span>
+                  <span class="px-1.5 py-0.2 rounded bg-violet-500/20 text-violet-300 font-mono text-[9px]">PIN OK</span>
+                </div>
+                <div class="text-[10px] text-slate-400 font-mono truncate">
+                  Counter: {{ k.counter }} &bull; Terdaftar: {{ new Date(k.createdAt).toLocaleDateString() }}
+                </div>
+              </div>
+              <button
+                @click="deleteWebAuthnKey(k.id)"
+                class="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-[11px] font-bold shrink-0 cursor-pointer"
+                title="Hapus Kunci Ini"
+              >
+                Hapus
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Add New Key Form -->
+        <div class="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-3">
+          <div class="space-y-1">
+            <label class="block text-xs font-bold text-slate-300">Nama Perangkat YubiKey</label>
+            <input
+              v-model="newKeyLabel"
+              type="text"
+              placeholder="Contoh: YubiKey 5 NFC (Utama)"
+              class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-violet-500"
+            />
+          </div>
+
+          <!-- Error Alert -->
+          <div v-if="keyRegisterError" class="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300">
+            {{ keyRegisterError }}
+          </div>
+
+          <button
+            type="button"
+            @click="registerNewYubiKey"
+            :disabled="registeringKey"
+            class="w-full py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-xs font-bold shadow-lg shadow-violet-500/25 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+          >
+            <span v-if="registeringKey" class="animate-spin text-sm">⏳</span>
+            <span v-else>+</span>
+            <span>{{ registeringKey ? 'Menunggu PIN & Sentuhan YubiKey...' : 'Daftarkan YubiKey Ini (PIN + Touch)' }}</span>
+          </button>
+        </div>
+
+        <div class="flex justify-end pt-1">
+          <button
+            @click="showWebAuthnModal = false"
+            class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 cursor-pointer"
+          >
+            Tutup
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Modal: Add New Project / OAuth Client -->
     <div
       v-if="showAddClientModal"
@@ -1367,6 +1575,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
+import { startRegistration, startAuthentication, browserSupportsWebAuthn } from "@simplewebauthn/browser";
 
 // ─── Main Tabs Navigation ──────────────────────────────────────
 const activeTab = ref<"simulator" | "matrix" | "clients" | "sessions" | "settings" | "sdk">("simulator");
@@ -1404,6 +1613,7 @@ const savingSettings = ref(false);
 
 // ─── Public Portal State (Login vs Register) ────────────────────
 const authPortalTab = ref<"login" | "register">("login");
+const loginMode = ref<"password" | "yubikey">("password");
 const publicSettings = ref({
   allowPublicRegistration: true,
   requireAdminApproval: false,
@@ -1440,6 +1650,17 @@ const loginLoading = ref(false);
 const loginError = ref("");
 const loginRequire2fa = ref(false);
 const loginDemoTotp = ref("");
+
+// ─── WebAuthn / YubiKey State ──────────────────────────────────
+const yubikeyIdentifier = ref("josapratama@minihost.local");
+const yubikeyLoading = ref(false);
+const yubikeyError = ref("");
+
+const showWebAuthnModal = ref(false);
+const myWebAuthnKeys = ref<any[]>([]);
+const newKeyLabel = ref("YubiKey 5 NFC (Hardware Token)");
+const registeringKey = ref(false);
+const keyRegisterError = ref("");
 
 // ─── Search Queries ─────────────────────────────────────────────
 const userSearchQuery = ref("");
@@ -1484,7 +1705,7 @@ async function apiFetch(url: string, options: RequestInit = {}): Promise<Respons
     headers.set("Authorization", `Bearer ${token}`);
   }
   const res = await fetch(url, { ...options, headers });
-  if (res.status === 401 && !url.includes("/api/admin/login")) {
+  if (res.status === 401 && !url.includes("/api/admin/login") && !url.includes("/api/webauthn/login")) {
     localStorage.removeItem("authhub_admin_token");
     localStorage.removeItem("authhub_admin_user");
     currentAdmin.value = null;
@@ -1583,11 +1804,156 @@ async function handleAdminLogin() {
     showToast(`Selamat datang kembali, ${data.user.name}!`);
     await fetchOverview();
     await fetchSdkSnippets();
+    await fetchMyWebAuthnKeys();
   } catch (err: any) {
     loginError.value = err.message || "Gagal menghubungi server";
   } finally {
     loginLoading.value = false;
   }
+}
+
+async function handleYubikeyLogin() {
+  yubikeyLoading.value = true;
+  yubikeyError.value = "";
+
+  if (!browserSupportsWebAuthn()) {
+    yubikeyError.value = "Browser ini tidak mendukung WebAuthn / FIDO2 security key.";
+    yubikeyLoading.value = false;
+    return;
+  }
+
+  try {
+    // 1. Get authentication options from backend
+    const res = await fetch("/api/webauthn/login/options", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier: yubikeyIdentifier.value.trim() || undefined }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      yubikeyError.value = data.error || "Gagal memulai otentikasi YubiKey.";
+      return;
+    }
+
+    // 2. Invoke native WebAuthn ceremony (prompts for User PIN & touch)
+    const asseResp = await startAuthentication(data.options);
+
+    // 3. Verify assertion on backend
+    const verifyRes = await fetch("/api/webauthn/login/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        challengeSessionId: data.challengeSessionId,
+        response: asseResp,
+      }),
+    });
+    const verifyData = await verifyRes.json();
+    if (!verifyRes.ok) {
+      yubikeyError.value = verifyData.error || "Verifikasi YubiKey ditolak.";
+      return;
+    }
+
+    // 4. Success!
+    localStorage.setItem("authhub_admin_token", verifyData.token);
+    localStorage.setItem("authhub_admin_user", JSON.stringify(verifyData.user));
+    currentAdmin.value = verifyData.user;
+    isLoggedIn.value = true;
+    showToast(verifyData.message || "✅ Login dengan YubiKey (PIN Terverifikasi) Berhasil!");
+    await fetchOverview();
+    await fetchSdkSnippets();
+    await fetchMyWebAuthnKeys();
+  } catch (err: any) {
+    if (err.name === "NotAllowedError") {
+      yubikeyError.value = "Autentikasi dibatalkan atau PIN salah.";
+    } else {
+      yubikeyError.value = err.message || "Gagal melakukan verifikasi YubiKey.";
+    }
+  } finally {
+    yubikeyLoading.value = false;
+  }
+}
+
+async function fetchMyWebAuthnKeys() {
+  try {
+    const res = await apiFetch("/api/webauthn/keys");
+    if (res.ok) {
+      const data = await res.json();
+      myWebAuthnKeys.value = data.keys || [];
+    }
+  } catch (e) {
+    console.error("Failed to load webauthn keys", e);
+  }
+}
+
+async function registerNewYubiKey() {
+  registeringKey.value = true;
+  keyRegisterError.value = "";
+
+  if (!browserSupportsWebAuthn()) {
+    keyRegisterError.value = "Browser Anda tidak mendukung WebAuthn / FIDO2.";
+    registeringKey.value = false;
+    return;
+  }
+
+  try {
+    // 1. Get registration options
+    const res = await apiFetch("/api/webauthn/register/options", { method: "POST" });
+    const options = await res.json();
+    if (!res.ok) {
+      keyRegisterError.value = options.error || "Gagal mendapatkan opsi registrasi.";
+      return;
+    }
+
+    // 2. Invoke browser native WebAuthn ceremony (prompts user to enter YubiKey PIN + Touch)
+    const attResp = await startRegistration(options);
+
+    // 3. Send response to backend
+    const verifyRes = await apiFetch("/api/webauthn/register/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        response: attResp,
+        keyName: newKeyLabel.value.trim() || "YubiKey Security Key (PIN)",
+      }),
+    });
+    const verifyData = await verifyRes.json();
+    if (!verifyRes.ok) {
+      keyRegisterError.value = verifyData.error || "Verifikasi registrasi YubiKey gagal.";
+      return;
+    }
+
+    showToast(verifyData.message || "✅ YubiKey berhasil didaftarkan dengan User PIN!");
+    newKeyLabel.value = "YubiKey 5 NFC (Hardware Token)";
+    await fetchMyWebAuthnKeys();
+    await fetchOverview();
+  } catch (err: any) {
+    if (err.name === "NotAllowedError") {
+      keyRegisterError.value = "Pendaftaran dibatalkan atau waktu habis.";
+    } else {
+      keyRegisterError.value = err.message || "Gagal mendaftarkan YubiKey.";
+    }
+  } finally {
+    registeringKey.value = false;
+  }
+}
+
+async function deleteWebAuthnKey(keyId: string) {
+  if (!confirm("Apakah Anda yakin ingin menghapus kunci keamanan YubiKey ini?")) return;
+  try {
+    const res = await apiFetch(`/api/webauthn/keys/${keyId}`, { method: "DELETE" });
+    if (res.ok) {
+      showToast("Kunci YubiKey berhasil dihapus.");
+      await fetchMyWebAuthnKeys();
+      await fetchOverview();
+    }
+  } catch (e: any) {
+    showToast("Gagal menghapus kunci: " + e.message);
+  }
+}
+
+function openWebAuthnModal() {
+  showWebAuthnModal.value = true;
+  fetchMyWebAuthnKeys();
 }
 
 async function handleAdminLogout() {
@@ -1627,7 +1993,6 @@ const selectedSimClient = computed(() =>
 
 function selectUserForSimulation(u: any) {
   simForm.value.identifier = u.email;
-  // If root admin, auto-fill root password
   if (u.id === "usr_josa_root") {
     simForm.value.password = "admin123";
   } else {
@@ -1908,6 +2273,7 @@ onMounted(async () => {
         isLoggedIn.value = true;
         await fetchOverview();
         await fetchSdkSnippets();
+        await fetchMyWebAuthnKeys();
         return;
       }
     } catch (e) {
