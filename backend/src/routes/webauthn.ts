@@ -49,9 +49,9 @@ function getRpConfig(req: Request) {
 
 /**
  * 1. Register WebAuthn / YubiKey Options (Protected)
- * POST /api/webauthn/register/options
+ * POST /api/webauthn/register/options or /register/options
  */
-webauthnRouter.post("/api/webauthn/register/options", authMiddleware, async (req: AuthRequest, res: Response) => {
+webauthnRouter.post(["/register/options", "/api/webauthn/register/options"], authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const admin = req.user;
     if (!admin?.sub) return res.status(401).json({ error: "Unauthorized" });
@@ -93,9 +93,9 @@ webauthnRouter.post("/api/webauthn/register/options", authMiddleware, async (req
 
 /**
  * 2. Verify Registration Response & Save YubiKey Credential (Protected)
- * POST /api/webauthn/register/verify
+ * POST /api/webauthn/register/verify or /register/verify
  */
-webauthnRouter.post("/api/webauthn/register/verify", authMiddleware, async (req: AuthRequest, res: Response) => {
+webauthnRouter.post(["/register/verify", "/api/webauthn/register/verify"], authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const admin = req.user;
     if (!admin?.sub) return res.status(401).json({ error: "Unauthorized" });
@@ -167,9 +167,9 @@ webauthnRouter.post("/api/webauthn/register/verify", authMiddleware, async (req:
 
 /**
  * 3. List Registered YubiKeys for Current User (Protected)
- * GET /api/webauthn/keys
+ * GET /api/webauthn/keys or /keys
  */
-webauthnRouter.get("/api/webauthn/keys", authMiddleware, (req: AuthRequest, res: Response) => {
+webauthnRouter.get(["/keys", "/api/webauthn/keys"], authMiddleware, (req: AuthRequest, res: Response) => {
   const admin = req.user;
   if (!admin?.sub) return res.status(401).json({ error: "Unauthorized" });
 
@@ -189,9 +189,9 @@ webauthnRouter.get("/api/webauthn/keys", authMiddleware, (req: AuthRequest, res:
 
 /**
  * 4. Delete a Registered YubiKey (Protected)
- * DELETE /api/webauthn/keys/:id
+ * DELETE /api/webauthn/keys/:id or /keys/:id
  */
-webauthnRouter.delete("/api/webauthn/keys/:id", authMiddleware, (req: AuthRequest, res: Response) => {
+webauthnRouter.delete(["/keys/:id", "/api/webauthn/keys/:id"], authMiddleware, (req: AuthRequest, res: Response) => {
   const admin = req.user;
   if (!admin?.sub) return res.status(401).json({ error: "Unauthorized" });
 
@@ -218,9 +218,9 @@ webauthnRouter.delete("/api/webauthn/keys/:id", authMiddleware, (req: AuthReques
 
 /**
  * 5. Public Authentication Options for YubiKey Login
- * POST /api/webauthn/login/options
+ * POST /api/webauthn/login/options or /login/options
  */
-webauthnRouter.post("/api/webauthn/login/options", async (req: Request, res: Response) => {
+webauthnRouter.post(["/login/options", "/api/webauthn/login/options"], async (req: Request, res: Response) => {
   try {
     const { identifier } = req.body;
     const rpConfig = getRpConfig(req);
@@ -271,9 +271,9 @@ webauthnRouter.post("/api/webauthn/login/options", async (req: Request, res: Res
 
 /**
  * 6. Public Verify YubiKey Login Assertion (PIN + Touch)
- * POST /api/webauthn/login/verify
+ * POST /api/webauthn/login/verify or /login/verify
  */
-webauthnRouter.post("/api/webauthn/login/verify", async (req: Request, res: Response) => {
+webauthnRouter.post(["/login/verify", "/api/webauthn/login/verify"], async (req: Request, res: Response) => {
   try {
     const { challengeSessionId, response, clientSlug, clientId, redirectUri, state } = req.body;
     if (!challengeSessionId || !response) {

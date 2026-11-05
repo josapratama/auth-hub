@@ -55,6 +55,7 @@ app.get("/health", (_req: Request, res: Response) => {
 app.use(oauthRouter);
 app.use(authRouter);
 app.use("/api/webauthn", webauthnRouter);
+app.use(webauthnRouter);
 app.use("/api/clients", clientsRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/sessions", sessionsRouter);
