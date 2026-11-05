@@ -36,6 +36,7 @@ export function createInitialData(): AuthHubSchema {
       redirectUris: [
         "https://polyglot.josapratama.com/auth/callback",
         "http://localhost:4000/auth/callback",
+        "http://localhost:3001/auth/callback",
       ],
       homepageUrl: "http://localhost:4000",
       techStack: "Vue 3 + Express TS",
