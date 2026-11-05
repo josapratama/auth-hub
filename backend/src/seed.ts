@@ -54,6 +54,7 @@ export function createInitialData(): AuthHubSchema {
       clientId: "ah_client_notifybridge_4e5f6a",
       clientSecret: "ah_secret_notifybridge_9f8e7d6c5b4a3f2e1d0c9b",
       redirectUris: [
+        "https://notify-bridge.josapratama.com/auth/callback",
         "https://notify.josapratama.com/auth/callback",
         "http://localhost:3000/auth/callback",
         "http://localhost:4200/auth/callback",
@@ -75,6 +76,7 @@ export function createInitialData(): AuthHubSchema {
       clientId: "ah_client_pulsehub_8a9b0c",
       clientSecret: "ah_secret_pulsehub_1c2d3e4f5a6b7c8d9e0f",
       redirectUris: [
+        "https://pulse-hub.josapratama.com/auth/callback",
         "https://status.josapratama.com/auth/callback",
         "http://localhost:3000/auth/callback",
         "http://localhost:5173/auth/callback",
