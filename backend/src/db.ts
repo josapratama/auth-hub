@@ -332,6 +332,25 @@ function createInitialData(): AuthHubSchema {
       createdAt: now,
       updatedAt: now,
     },
+    {
+      id: "app_guidepath",
+      name: "GuidePath Thesis & AI Research",
+      slug: "guidepath",
+      description: "Thesis Guidance Platform, Milestone Tracking, AI Research Gap & SINTA Journal Indexer",
+      icon: "🎓",
+      clientId: "ah_client_guidepath_7f8a9b",
+      clientSecret: "ah_secret_guidepath_4c5d6e7f8a9b0c1d2e3f4a",
+      redirectUris: [
+        "https://guidepath.josapratama.com/auth/callback",
+        "http://localhost:8000/auth/callback",
+      ],
+      homepageUrl: "https://guidepath.josapratama.com",
+      techStack: "Laravel 11 + Inertia React",
+      require2FA: false,
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+    },
   ];
 
   const users: AuthUser[] = [
@@ -352,6 +371,7 @@ function createInitialData(): AuthHubSchema {
         "arsip-digital": "superadmin",
         "irma-iryani": "superadmin",
         portfolio: "superadmin",
+        guidepath: "superadmin",
       },
       twoFactorEnabled: false,
       twoFactorSecret: "JOSA2FASECRETKEY2026",
@@ -367,7 +387,7 @@ function createInitialData(): AuthHubSchema {
     allowPublicRegistration: true,
     requireAdminApproval: false,
     defaultMemberRole: "member",
-    publicClientSlugs: ["nexus-chat", "polyglot-hub", "portfolio", "uploadbox", "uml-flow"],
+    publicClientSlugs: ["guidepath", "nexus-chat", "polyglot-hub", "portfolio", "uploadbox", "uml-flow"],
   };
 
   return {
@@ -412,13 +432,45 @@ class AuthHubDatabase {
         (a) => a.id !== "aud_init_1" && a.id !== "aud_init_2"
       );
 
+      // Ensure guidepath client exists
+      if (!parsed.clients.some((c) => c.slug === "guidepath")) {
+        const now = new Date().toISOString();
+        parsed.clients.push({
+          id: "app_guidepath",
+          name: "GuidePath Thesis & AI Research",
+          slug: "guidepath",
+          description: "Thesis Guidance Platform, Milestone Tracking, AI Research Gap & SINTA Journal Indexer",
+          icon: "🎓",
+          clientId: "ah_client_guidepath_7f8a9b",
+          clientSecret: "ah_secret_guidepath_4c5d6e7f8a9b0c1d2e3f4a",
+          redirectUris: [
+            "https://guidepath.josapratama.com/auth/callback",
+            "http://localhost:8000/auth/callback",
+          ],
+          homepageUrl: "https://guidepath.josapratama.com",
+          techStack: "Laravel 11 + Inertia React",
+          require2FA: false,
+          isActive: true,
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        // Ensure root superadmin has guidepath access
+        const root = parsed.users.find((u) => u.id === "usr_josa_root");
+        if (root && root.appRoles) {
+          root.appRoles.guidepath = "superadmin";
+        }
+      }
+
       if (!parsed.settings) {
         parsed.settings = {
           allowPublicRegistration: true,
           requireAdminApproval: false,
           defaultMemberRole: "member",
-          publicClientSlugs: ["nexus-chat", "polyglot-hub", "portfolio", "uploadbox", "uml-flow"],
+          publicClientSlugs: ["guidepath", "nexus-chat", "polyglot-hub", "portfolio", "uploadbox", "uml-flow"],
         };
+      } else if (!parsed.settings.publicClientSlugs.includes("guidepath")) {
+        parsed.settings.publicClientSlugs.push("guidepath");
       }
 
       this.data = parsed;

@@ -1083,6 +1083,15 @@
             <p class="text-xs text-slate-400">Pusat Autentikasi Terpadu &amp; Akses Lintas Project</p>
           </div>
 
+          <!-- OAuth Request Banner (When redirected from GuidePath or another client) -->
+          <div v-if="oauthClientInfo" class="p-3.5 rounded-2xl bg-indigo-950/70 border border-indigo-500/40 flex items-center gap-3">
+            <span class="text-2xl shrink-0">{{ oauthClientInfo.icon || '🎓' }}</span>
+            <div class="space-y-0.5 truncate text-left">
+              <div class="text-[10px] uppercase font-bold text-indigo-400 tracking-wider">Permintaan Single Sign-On</div>
+              <div class="text-xs font-bold text-white truncate">Login untuk melanjutkan ke {{ oauthClientInfo.name }}</div>
+            </div>
+          </div>
+
           <!-- Switcher Pill: Masuk vs Daftar Akun -->
           <div class="p-1 rounded-xl bg-slate-900 border border-slate-800 flex items-center gap-1">
             <button
@@ -1614,6 +1623,30 @@ const savingSettings = ref(false);
 // ─── Public Portal State (Login vs Register) ────────────────────
 const authPortalTab = ref<"login" | "register">("login");
 const loginMode = ref<"password" | "yubikey">("password");
+const oauthClientInfo = ref<{
+  clientId?: string;
+  slug?: string;
+  name?: string;
+  icon?: string;
+  redirectUri?: string;
+  state?: string;
+} | null>(null);
+
+function checkOauthParams() {
+  const params = new URLSearchParams(window.location.search);
+  const clientId = params.get("client_id") || params.get("client_slug");
+  if (clientId) {
+    const isGuide = clientId === "guidepath" || clientId.includes("guidepath");
+    oauthClientInfo.value = {
+      clientId,
+      slug: params.get("client_slug") || (isGuide ? "guidepath" : clientId),
+      name: params.get("client_name") || (isGuide ? "GuidePath Thesis & AI Research" : clientId),
+      icon: params.get("client_icon") || (isGuide ? "🎓" : "⚡"),
+      redirectUri: params.get("redirect_uri") || undefined,
+      state: params.get("state") || "sso",
+    };
+  }
+}
 const publicSettings = ref({
   allowPublicRegistration: true,
   requireAdminApproval: false,
@@ -1802,6 +1835,34 @@ async function handleAdminLogin() {
     currentAdmin.value = data.user;
     isLoggedIn.value = true;
     showToast(`Selamat datang kembali, ${data.user.name}!`);
+
+    // If redirected by an OAuth client (e.g. GuidePath), authorize and redirect back!
+    if (oauthClientInfo.value) {
+      try {
+        const authRes = await fetch("/api/v1/auth/authorize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            identifier: loginForm.value.identifier,
+            password: loginForm.value.password,
+            totpCode: loginForm.value.totpCode,
+            clientId: oauthClientInfo.value.clientId || oauthClientInfo.value.slug,
+            redirectUri: oauthClientInfo.value.redirectUri,
+          }),
+        });
+        const authData = await authRes.json();
+        if (authData.redirectUri) {
+          showToast(`✅ Autentikasi SSO sukses! Mengalihkan ke ${oauthClientInfo.value.name}...`);
+          setTimeout(() => {
+            window.location.href = authData.redirectUri;
+          }, 600);
+          return;
+        }
+      } catch (oauthErr) {
+        console.error("SSO redirect error", oauthErr);
+      }
+    }
+
     await fetchOverview();
     await fetchSdkSnippets();
     await fetchMyWebAuthnKeys();
@@ -1838,13 +1899,17 @@ async function handleYubikeyLogin() {
     // 2. Invoke native WebAuthn ceremony (prompts for User PIN & touch)
     const asseResp = await startAuthentication(data.options);
 
-    // 3. Verify assertion on backend
+    // 3. Verify assertion on backend (pass OAuth client context if present)
     const verifyRes = await fetch("/api/webauthn/login/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         challengeSessionId: data.challengeSessionId,
         response: asseResp,
+        clientSlug: oauthClientInfo.value?.slug,
+        clientId: oauthClientInfo.value?.clientId,
+        redirectUri: oauthClientInfo.value?.redirectUri,
+        state: oauthClientInfo.value?.state,
       }),
     });
     const verifyData = await verifyRes.json();
@@ -1859,6 +1924,15 @@ async function handleYubikeyLogin() {
     currentAdmin.value = verifyData.user;
     isLoggedIn.value = true;
     showToast(verifyData.message || "✅ Login dengan YubiKey (PIN Terverifikasi) Berhasil!");
+
+    if (verifyData.redirectUri) {
+      showToast(`✅ YubiKey Terverifikasi! Mengalihkan ke ${oauthClientInfo.value?.name || 'aplikasi'}...`);
+      setTimeout(() => {
+        window.location.href = verifyData.redirectUri;
+      }, 600);
+      return;
+    }
+
     await fetchOverview();
     await fetchSdkSnippets();
     await fetchMyWebAuthnKeys();
@@ -2262,6 +2336,7 @@ function roleBadgeClass(role: string) {
 }
 
 onMounted(async () => {
+  checkOauthParams();
   await fetchPublicSettings();
   const token = getAdminToken();
   if (token) {

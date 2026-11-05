@@ -678,11 +678,33 @@ app.post("/api/webauthn/login/verify", async (req: Request, res: Response) => {
 
     const { passwordHash, twoFactorSecret, ...safeUser } = user;
 
+    let authorizationCode: string | undefined = undefined;
+    let oauthRedirectUrl: string | undefined = undefined;
+
+    if (req.body.clientSlug || req.body.clientId) {
+      const targetClient = db.getClientBySlugOrId(req.body.clientSlug || req.body.clientId);
+      if (targetClient) {
+        const targetRedirect = req.body.redirectUri || targetClient.redirectUris[0];
+        const authCode = db.createAuthCode({
+          userId: user.id,
+          clientId: targetClient.clientId,
+          clientSlug: targetClient.slug,
+          redirectUri: targetRedirect,
+          scopes: ["openid", "profile", "email", "roles"],
+        });
+        authorizationCode = authCode.code;
+        const state = req.body.state || "sso";
+        oauthRedirectUrl = `${targetRedirect}${targetRedirect.includes("?") ? "&" : "?"}code=${authCode.code}&state=${encodeURIComponent(state)}`;
+      }
+    }
+
     res.json({
       success: true,
       token,
       user: safeUser,
       keyName: cred.name,
+      authorizationCode,
+      redirectUri: oauthRedirectUrl,
       message: `Selamat datang kembali, ${user.name}! Autentikasi YubiKey (PIN + Touch) berhasil.`,
     });
   } catch (err: any) {
@@ -1078,6 +1100,36 @@ app.post("/api/v1/auth/register", (req: Request, res: Response) => {
       : "Pendaftaran berhasil! Akun Anda siap digunakan untuk Single Sign-On di seluruh ekosistem project.",
     user,
   });
+});
+
+/**
+ * 0. Standard OAuth2 Browser Authorization Endpoint
+ * GET /oauth/authorize
+ * Redirects user to AuthHub SSO Consent & Login UI with target client parameters.
+ */
+app.get("/oauth/authorize", (req: Request, res: Response) => {
+  const { client_id, redirect_uri, response_type, state, scope } = req.query;
+  const client =
+    db.getClientBySlugOrId(String(client_id || "")) ||
+    db.getClientBySlugOrId("guidepath");
+
+  if (!client) {
+    return res.status(404).send("Error: OAuth2 Client Application not registered in AuthHub");
+  }
+
+  const targetRedirect = String(redirect_uri || client.redirectUris[0]);
+  const ssoQuery = new URLSearchParams({
+    oauth: "1",
+    client_id: client.clientId,
+    client_slug: client.slug,
+    client_name: client.name,
+    client_icon: client.icon,
+    redirect_uri: targetRedirect,
+    state: String(state || "sso"),
+    response_type: String(response_type || "code"),
+  }).toString();
+
+  res.redirect(`/?${ssoQuery}`);
 });
 
 /**
