@@ -414,6 +414,15 @@ export class AuthHubDatabase {
     return safeUser;
   }
 
+  public updateUserPassword(userId: string, newPassword: string): boolean {
+    const user = this.data.users.find((u) => u.id === userId);
+    if (!user) return false;
+    user.passwordHash = hashPassword(newPassword);
+    user.updatedAt = new Date().toISOString();
+    this.save();
+    return true;
+  }
+
   public deleteUser(userId: string): boolean {
     const before = this.data.users.length;
     this.data.users = this.data.users.filter((u) => u.id !== userId);

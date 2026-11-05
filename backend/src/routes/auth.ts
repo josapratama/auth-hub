@@ -279,19 +279,6 @@ authRouter.post("/api/admin/login", async (req: Request, res: Response) => {
       .json({ error: "Akun Anda sedang dinonaktifkan. Hubungi Administrator." });
   }
 
-  if (user.globalRole !== "superadmin" && user.globalRole !== "admin") {
-    db.addAuditLog({
-      event: "ADMIN_LOGIN_REJECTED",
-      userEmail: user.email,
-      ipAddress: ip,
-      status: "warning",
-      details: `User ${user.email} mencoba login ke Admin Dashboard tanpa hak akses (${user.globalRole})`,
-    });
-    return res.status(403).json({
-      error: "Akses ditolak: Akun Anda tidak memiliki hak akses Administrator ke AuthHub.",
-    });
-  }
-
   // 2FA TOTP verification if enabled
   if (user.twoFactorEnabled && user.twoFactorSecret) {
     if (!totpCode || !verifyTotpCode(user.twoFactorSecret, String(totpCode))) {
@@ -305,16 +292,17 @@ authRouter.post("/api/admin/login", async (req: Request, res: Response) => {
 
   clearRateLimit(rateLimitKey);
   const deviceInfo = parseDeviceInfo(req);
+  const isStaff = user.globalRole === "superadmin" || user.globalRole === "admin";
 
   const session = db.createSession({
     userId: user.id,
     userEmail: user.email,
     userName: user.name,
-    clientSlug: "auth-hub-dashboard",
-    clientName: "AuthHub Management Dashboard",
-    appRole: user.globalRole === "superadmin" ? "superadmin" : "admin",
+    clientSlug: isStaff ? "auth-hub-dashboard" : "auth-hub-portal",
+    clientName: isStaff ? "AuthHub Management Dashboard" : "AuthHub Member Portal",
+    appRole: user.globalRole === "superadmin" ? "superadmin" : isStaff ? "admin" : "viewer",
     ipAddress: ip,
-    userAgent: (req.headers["user-agent"] as string) || "AuthHub Admin UI",
+    userAgent: (req.headers["user-agent"] as string) || "AuthHub UI",
     deviceInfo,
     ttlSeconds: 86400,
   });
@@ -325,21 +313,21 @@ authRouter.post("/api/admin/login", async (req: Request, res: Response) => {
       email: user.email,
       name: user.name,
       globalRole: user.globalRole,
-      clientId: "auth-hub-dashboard",
-      clientSlug: "auth-hub-dashboard",
-      scopes: ["admin", "superadmin", "manage:all"],
+      clientId: "auth-hub",
+      clientSlug: isStaff ? "auth-hub-dashboard" : "auth-hub-portal",
+      scopes: isStaff ? ["admin", "superadmin", "manage:all"] : ["member", "profile:manage", "yubikey:manage"],
       sid: session.id,
     },
     86400
   );
 
   db.addAuditLog({
-    event: "ADMIN_LOGIN_SUCCESS",
+    event: isStaff ? "ADMIN_LOGIN_SUCCESS" : "MEMBER_LOGIN_SUCCESS",
     userEmail: user.email,
-    clientSlug: "auth-hub-dashboard",
+    clientSlug: isStaff ? "auth-hub-dashboard" : "auth-hub-portal",
     ipAddress: ip,
     status: "success",
-    details: `Admin ${user.name} (${user.email}) berhasil login (${deviceInfo.browser} di ${deviceInfo.os})`,
+    details: `${isStaff ? "Admin" : "Member"} ${user.name} (${user.email}) berhasil login (${deviceInfo.browser} di ${deviceInfo.os})`,
   });
 
   // Notify new device login via email
@@ -351,7 +339,7 @@ authRouter.post("/api/admin/login", async (req: Request, res: Response) => {
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; background: #0f172a; color: #f8fafc; border-radius: 16px; padding: 32px; border: 1px solid #1e293b;">
         <h2 style="color: #6366f1; margin-top: 0;">🛡️ Login Baru Terdeteksi</h2>
         <p>Halo <strong>${user.name}</strong>,</p>
-        <p>Sesi login baru berhasil dibuat untuk akun Anda di <strong>AuthHub Management Dashboard</strong>:</p>
+        <p>Sesi login baru berhasil dibuat untuk akun Anda di <strong>${isStaff ? "AuthHub Management Dashboard" : "AuthHub Member Portal"}</strong>:</p>
         <ul style="color: #cbd5e1; line-height: 1.8;">
           <li><strong>Perangkat:</strong> ${deviceInfo.browser} (${deviceInfo.os})</li>
           <li><strong>Tipe Perangkat:</strong> ${deviceInfo.device}</li>
@@ -375,6 +363,105 @@ authRouter.post("/api/admin/login", async (req: Request, res: Response) => {
       twoFactorEnabled: user.twoFactorEnabled,
     },
   });
+});
+
+/**
+ * GET /api/me/portal
+ * Returns member self-service bundle: profile, registered YubiKeys, active sessions, and active apps with launch info
+ */
+authRouter.get("/api/me/portal", authMiddleware, (req: AuthRequest, res: Response) => {
+  const userId = req.user?.sub;
+  if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+  const user = db.findUserByIdentifier(userId);
+  if (!user) return res.status(404).json({ error: "User tidak ditemukan" });
+
+  const clients = db.getClients().filter((c) => c.isActive);
+  const mySessions = db.getSessions().filter(
+    (s) => s.userId === user.id && !s.revoked && new Date(s.expiresAt).getTime() > Date.now()
+  );
+
+  const safeKeys = (user.webAuthnCredentials || []).map((k) => ({
+    id: k.id,
+    name: k.name,
+    createdAt: k.createdAt,
+    counter: k.counter,
+  }));
+
+  res.json({
+    user: {
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      name: user.name,
+      globalRole: user.globalRole,
+      twoFactorEnabled: user.twoFactorEnabled,
+      createdAt: user.createdAt,
+      keysCount: safeKeys.length,
+      keys: safeKeys,
+    },
+    apps: clients,
+    sessions: mySessions,
+  });
+});
+
+/**
+ * POST /api/me/change-password
+ * Self-service password change for currently authenticated user
+ */
+authRouter.post("/api/me/change-password", authMiddleware, (req: AuthRequest, res: Response) => {
+  const userId = req.user?.sub;
+  if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+  const { currentPassword, newPassword } = req.body;
+  if (!newPassword || newPassword.length < 6) {
+    return res.status(400).json({ error: "Password baru minimal 6 karakter." });
+  }
+
+  const user = db.findUserByIdentifier(userId);
+  if (!user) return res.status(404).json({ error: "User tidak ditemukan" });
+
+  if (!verifyPassword(currentPassword || "", user.passwordHash)) {
+    return res.status(400).json({ error: "Password saat ini salah." });
+  }
+
+  db.updateUserPassword(user.id, newPassword);
+
+  db.addAuditLog({
+    event: "USER_PASSWORD_CHANGED",
+    userEmail: user.email,
+    ipAddress: getClientIp(req),
+    status: "info",
+    details: `User ${user.email} berhasil memperbarui password akunnya secara mandiri.`,
+  });
+
+  res.json({ success: true, message: "Password berhasil diperbarui!" });
+});
+
+/**
+ * POST /api/me/sessions/:sessionId/revoke
+ * Self-service session revocation for currently authenticated user
+ */
+authRouter.post("/api/me/sessions/:sessionId/revoke", authMiddleware, (req: AuthRequest, res: Response) => {
+  const userId = req.user?.sub;
+  const sessionId = Array.isArray(req.params.sessionId) ? req.params.sessionId[0] : req.params.sessionId;
+  if (!userId || !sessionId) return res.status(400).json({ error: "Parameter tidak valid" });
+
+  const session = db.getSessionById(sessionId);
+  if (!session || session.userId !== userId) {
+    return res.status(403).json({ error: "Tidak memiliki hak untuk mencabut sesi ini." });
+  }
+
+  db.revokeSession(sessionId);
+  db.addAuditLog({
+    event: "SESSION_REVOKED",
+    userEmail: req.user?.email || "unknown",
+    ipAddress: getClientIp(req),
+    status: "warning",
+    details: `User mencabut sesi ID ${sessionId} secara mandiri.`,
+  });
+
+  res.json({ success: true, message: "Sesi berhasil diputus." });
 });
 
 /**

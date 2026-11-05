@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useAuth } from "./composables/useAuth.js";
 import { useToast } from "./composables/useToast.js";
 import type { OAuthClient, AuthUser, AuthSession, AuditLog, AuthHubSettings, OverviewStats } from "./types/index.js";
@@ -10,6 +10,7 @@ import Toast from "./components/layout/Toast.vue";
 
 // Portal Component (Public SSO & Registration)
 import PublicAuthPortal from "./components/portal/PublicAuthPortal.vue";
+import MemberPortalTab from "./components/portal/MemberPortalTab.vue";
 
 // Dashboard Tab Components
 import OverviewTab from "./components/dashboard/OverviewTab.vue";
@@ -25,8 +26,15 @@ import ClientModal from "./components/modals/ClientModal.vue";
 import UserModal from "./components/modals/UserModal.vue";
 import YubiKeyRegisterModal from "./components/modals/YubiKeyRegisterModal.vue";
 
-const { isLoggedIn, activeTab, apiFetch } = useAuth();
+const { isLoggedIn, currentAdmin, activeTab, apiFetch } = useAuth();
 const { showToast } = useToast();
+
+const isStaff = computed(() => {
+  const role = currentAdmin.value?.globalRole;
+  return role === "superadmin" || role === "admin";
+});
+
+const memberPortalRef = ref<any>(null);
 
 // State Data
 const stats = ref<OverviewStats>({
@@ -53,6 +61,13 @@ const isYubiKeyModalOpen = ref(false);
 
 async function loadData() {
   if (!isLoggedIn.value) return;
+
+  if (!isStaff.value) {
+    activeTab.value = "member-portal";
+    memberPortalRef.value?.refresh();
+    return;
+  }
+
   try {
     const res = await apiFetch("/api/overview");
     if (!res.ok) return;
@@ -66,6 +81,11 @@ async function loadData() {
   } catch (err) {
     console.warn("Failed to load overview bundle", err);
   }
+}
+
+function handleKeyRegistered() {
+  loadData();
+  memberPortalRef.value?.refresh();
 }
 
 onMounted(() => {
@@ -91,7 +111,15 @@ watch(isLoggedIn, (val) => {
         @login-success="loadData"
       />
 
-      <!-- VIEW B: AUTH-HUB MANAGEMENT DASHBOARD (When authenticated) -->
+      <!-- VIEW B: MEMBER SELF-SERVICE PORTAL (When regular member logged in) -->
+      <div v-else-if="!isStaff" class="space-y-6">
+        <MemberPortalTab
+          ref="memberPortalRef"
+          @register-yubikey="isYubiKeyModalOpen = true"
+        />
+      </div>
+
+      <!-- VIEW C: AUTH-HUB MANAGEMENT DASHBOARD (When superadmin / admin authenticated) -->
       <div v-else class="space-y-6">
         <!-- Tab 1: Overview -->
         <OverviewTab
@@ -177,7 +205,7 @@ watch(isLoggedIn, (val) => {
     <YubiKeyRegisterModal
       :open="isYubiKeyModalOpen"
       @close="isYubiKeyModalOpen = false"
-      @registered="loadData"
+      @registered="handleKeyRegistered"
     />
 
     <!-- Global Toast Alert -->

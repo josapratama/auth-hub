@@ -1,19 +1,31 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, computed } from "vue";
 import { useAuth } from "../../composables/useAuth.js";
 
 const { isLoggedIn, currentAdmin, activeTab, logout } = useAuth();
 const mobileMenuOpen = ref(false);
 
-const navTabs = [
-  { id: "overview", label: "Ringkasan", icon: "📊" },
-  { id: "simulator", label: "Simulasi SSO", icon: "⚡" },
-  { id: "clients", label: "Aplikasi Klien", icon: "🚀" },
-  { id: "users", label: "Pengguna & Role", icon: "👥" },
-  { id: "sessions", label: "Sesi Aktif", icon: "🌐" },
-  { id: "audit", label: "Audit Logs", icon: "📜" },
-  { id: "settings", label: "Pengaturan", icon: "⚙️" },
-];
+const isStaff = computed(() => {
+  const role = currentAdmin.value?.globalRole;
+  return role === "superadmin" || role === "admin";
+});
+
+const navTabs = computed(() => {
+  if (!isStaff.value) {
+    return [
+      { id: "member-portal", label: "Portal Saya", icon: "👤" },
+    ];
+  }
+  return [
+    { id: "overview", label: "Ringkasan", icon: "📊" },
+    { id: "simulator", label: "Simulasi SSO", icon: "⚡" },
+    { id: "clients", label: "Aplikasi Klien", icon: "🚀" },
+    { id: "users", label: "Pengguna & Role", icon: "👥" },
+    { id: "sessions", label: "Sesi Aktif", icon: "🌐" },
+    { id: "audit", label: "Audit Logs", icon: "📜" },
+    { id: "settings", label: "Pengaturan", icon: "⚙️" },
+  ];
+});
 
 function selectTab(id: string) {
   activeTab.value = id;
