@@ -2,148 +2,19 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { hashPassword } from "./crypto.js";
-
-export type AppRole = "superadmin" | "admin" | "editor" | "viewer" | "none";
-
-export interface OAuthClient {
-  id: string;
-  name: string;
-  slug: string;
-  description: string;
-  icon: string;
-  clientId: string;
-  clientSecret: string;
-  redirectUris: string[];
-  homepageUrl: string;
-  techStack: string;
-  require2FA: boolean;
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface WebAuthnCredential {
-  id: string; // Base64URL string of credential ID
-  publicKey: string; // Base64 representation of public key Uint8Array
-  counter: number;
-  transports?: string[];
-  deviceType?: string;
-  backedUp?: boolean;
-  name?: string; // Friendly name: "YubiKey 5 NFC (Hardware Token)"
-  createdAt: string;
-}
-
-export interface AuthUser {
-  id: string;
-  email: string;
-  username: string;
-  name: string;
-  avatar?: string;
-  passwordHash: string;
-  globalRole: "superadmin" | "admin" | "member";
-  /** Map of clientSlug -> role */
-  appRoles: Record<string, AppRole>;
-  twoFactorEnabled: boolean;
-  twoFactorSecret?: string;
-  webAuthnCredentials?: WebAuthnCredential[];
-  phoneWhatsapp?: string;
-  telegramChatId?: string;
-  isActive: boolean;
-  lastLoginAt?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface AuthCodeRecord {
-  code: string;
-  userId: string;
-  clientId: string;
-  clientSlug: string;
-  redirectUri: string;
-  scopes: string[];
-  expiresAt: number;
-  used: boolean;
-}
-
-export interface AuthSession {
-  id: string;
-  userId: string;
-  userEmail: string;
-  userName: string;
-  clientSlug: string;
-  clientName: string;
-  appRole: AppRole;
-  ipAddress: string;
-  userAgent: string;
-  issuedAt: string;
-  expiresAt: string;
-  revoked: boolean;
-}
-
-export interface AuditLog {
-  id: string;
-  timestamp: string;
-  event:
-    | "SSO_LOGIN_SUCCESS"
-    | "SSO_LOGIN_FAILED"
-    | "ADMIN_LOGIN_SUCCESS"
-    | "ADMIN_LOGIN_FAILED"
-    | "ADMIN_LOGIN_REJECTED"
-    | "ADMIN_LOGOUT"
-    | "OAUTH_CODE_ISSUED"
-    | "OAUTH_TOKEN_EXCHANGED"
-    | "TOKEN_VERIFIED"
-    | "SESSION_REVOKED"
-    | "ROLE_UPDATED"
-    | "CLIENT_SECRET_ROTATED"
-    | "CLIENT_CREATED"
-    | "CLIENT_DELETED"
-    | "USER_CREATED"
-    | "USER_REGISTERED"
-    | "USER_STATUS_TOGGLED"
-    | "SETTINGS_UPDATED"
-    | "WEBAUTHN_KEY_REGISTERED"
-    | "WEBAUTHN_KEY_DELETED"
-    | "WEBAUTHN_LOGIN_SUCCESS"
-    | "WEBAUTHN_LOGIN_FAILED";
-  userEmail: string;
-  clientSlug?: string;
-  ipAddress: string;
-  status: "success" | "warning" | "danger" | "info";
-  details: string;
-}
-
-export interface AuthHubSettings {
-  allowPublicRegistration: boolean;
-  requireAdminApproval: boolean;
-  defaultMemberRole: "viewer" | "member";
-  publicClientSlugs: string[];
-}
-
-export interface AuthHubSchema {
-  settings?: AuthHubSettings;
-  clients: OAuthClient[];
-  users: AuthUser[];
-  authCodes: AuthCodeRecord[];
-  sessions: AuthSession[];
-  auditLogs: AuditLog[];
-}
-
-function getDatabaseFilePath(): string {
-  if (process.env.AUTH_HUB_DB_FILE) {
-    return path.resolve(process.env.AUTH_HUB_DB_FILE);
-  }
-  const candidate1 = path.resolve(__dirname, "..", "data", "auth-store.json");
-  if (fs.existsSync(candidate1)) return candidate1;
-
-  const candidate2 = path.resolve(process.cwd(), "backend", "data", "auth-store.json");
-  if (fs.existsSync(candidate2)) return candidate2;
-
-  const candidate3 = path.resolve(process.cwd(), "data", "auth-store.json");
-  if (fs.existsSync(candidate3)) return candidate3;
-
-  return candidate1;
-}
+import { getDatabaseFilePath } from "./config.js";
+import { createInitialData } from "./seed.js";
+import type {
+  AppRole,
+  OAuthClient,
+  WebAuthnCredential,
+  AuthUser,
+  AuthCodeRecord,
+  AuthSession,
+  AuditLog,
+  AuthHubSettings,
+  AuthHubSchema,
+} from "./types.js";
 
 const DB_FILE = getDatabaseFilePath();
 
@@ -154,253 +25,7 @@ function ensureDirectoryExistence(filePath: string) {
   }
 }
 
-function createInitialData(): AuthHubSchema {
-  const now = new Date().toISOString();
-  const defaultPassHash = hashPassword("admin123");
-  const devPassHash = hashPassword("dev123");
-  const clientPassHash = hashPassword("client123");
-
-  const clients: OAuthClient[] = [
-    {
-      id: "app_minihost",
-      name: "Mini VPS Panel",
-      slug: "minihost",
-      description: "Cloud VPS KVM, Docker Apps, Raspberry Pi 5 Telemetry & Billing Panel",
-      icon: "⚡",
-      clientId: "ah_client_minihost_9f8a7b",
-      clientSecret: "ah_secret_minihost_e4d2c1b0a9f8e7d6c5b4a3",
-      redirectUris: [
-        "https://panel.josapratama.com/auth/callback",
-        "http://localhost:3001/auth/callback",
-      ],
-      homepageUrl: "https://panel.josapratama.com",
-      techStack: "Next.js + Python FastAPI",
-      require2FA: false,
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: "app_polyglot",
-      name: "Polyglot Hub",
-      slug: "polyglot-hub",
-      description: "Enterprise Translation Management System (TMS) & Build-Time i18n Sync",
-      icon: "🌐",
-      clientId: "ah_client_polyglot_3c4d5e",
-      clientSecret: "ah_secret_polyglot_7f8e9d0c1b2a3f4e5d6c7b",
-      redirectUris: [
-        "https://polyglot.josapratama.com/auth/callback",
-        "http://localhost:4000/auth/callback",
-      ],
-      homepageUrl: "http://localhost:4000",
-      techStack: "Vue 3 + Express TS",
-      require2FA: false,
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: "app_uploadbox",
-      name: "UploadBox CDN",
-      slug: "uploadbox",
-      description: "Cloud Object Storage, Image Transformation CDN & File Sharing Hub",
-      icon: "📦",
-      clientId: "ah_client_uploadbox_1a2b3c",
-      clientSecret: "ah_secret_uploadbox_9a8b7c6d5e4f3a2b1c0d9e",
-      redirectUris: [
-        "https://cdn.josapratama.com/auth/callback",
-        "http://localhost:5001/auth/callback",
-      ],
-      homepageUrl: "https://cdn.josapratama.com",
-      techStack: "React + Node.js Express",
-      require2FA: false,
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: "app_wabridge",
-      name: "WABridge Gateway",
-      slug: "wabridge",
-      description: "Multi-Device WhatsApp API Gateway, Webhook Automation & OTP Dispatcher",
-      icon: "📱",
-      clientId: "ah_client_wabridge_6d7e8f",
-      clientSecret: "ah_secret_wabridge_2b3c4d5e6f7a8b9c0d1e2f",
-      redirectUris: [
-        "https://wa.josapratama.com/auth/callback",
-        "http://localhost:5002/auth/callback",
-      ],
-      homepageUrl: "https://wa.josapratama.com",
-      techStack: "Next.js + Baileys Node API",
-      require2FA: false,
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: "app_nexus",
-      name: "Nexus Chat",
-      slug: "nexus-chat",
-      description: "Real-Time Encrypted Team Messaging, Channels & Presence Engine",
-      icon: "💬",
-      clientId: "ah_client_nexus_4e5f6a",
-      clientSecret: "ah_secret_nexus_8c7b6a5f4e3d2c1b0a9f8e",
-      redirectUris: [
-        "https://chat.josapratama.com/auth/callback",
-        "http://localhost:5003/auth/callback",
-      ],
-      homepageUrl: "https://chat.josapratama.com",
-      techStack: "Vue + Socket.io + Express",
-      require2FA: false,
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: "app_umlflow",
-      name: "UML Flow Studio",
-      slug: "uml-flow",
-      description: "Collaborative Architecture Diagramming, ERD & Sequence Designer",
-      icon: "📐",
-      clientId: "ah_client_umlflow_7b8c9d",
-      clientSecret: "ah_secret_umlflow_5f6e7d8c9b0a1f2e3d4c5b",
-      redirectUris: [
-        "https://uml.josapratama.com/auth/callback",
-        "http://localhost:5004/auth/callback",
-      ],
-      homepageUrl: "https://uml.josapratama.com",
-      techStack: "React + Canvas Engine",
-      require2FA: false,
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: "app_arsip",
-      name: "Arsip Digital",
-      slug: "arsip-digital",
-      description: "Document Management System, E-Archive Indexing & Approval Workflow",
-      icon: "🗂️",
-      clientId: "ah_client_arsip_2c3d4e",
-      clientSecret: "ah_secret_arsip_1d2e3f4a5b6c7d8e9f0a1b",
-      redirectUris: [
-        "https://arsip.josapratama.com/auth/callback",
-        "http://localhost:5005/auth/callback",
-      ],
-      homepageUrl: "https://arsip.josapratama.com",
-      techStack: "Fullstack Web App",
-      require2FA: false,
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: "app_irma",
-      name: "Irma Iryani Platform",
-      slug: "irma-iryani",
-      description: "Dedicated Business Portal, Client Management & Content Platform",
-      icon: "🌸",
-      clientId: "ah_client_irma_5a6b7c",
-      clientSecret: "ah_secret_irma_6c7d8e9f0a1b2c3d4e5f6a",
-      redirectUris: [
-        "https://irma.josapratama.com/auth/callback",
-        "http://localhost:5006/auth/callback",
-      ],
-      homepageUrl: "https://irma.josapratama.com",
-      techStack: "Frontend + REST Backend",
-      require2FA: false,
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: "app_portfolio",
-      name: "Portfolio CMS & API",
-      slug: "portfolio",
-      description: "Personal Brand Showcase, Blog Engine & Project Analytics",
-      icon: "🎨",
-      clientId: "ah_client_portfolio_8d9e0f",
-      clientSecret: "ah_secret_portfolio_3e4f5a6b7c8d9e0f1a2b3c",
-      redirectUris: [
-        "https://josapratama.com/auth/callback",
-        "http://localhost:5007/auth/callback",
-      ],
-      homepageUrl: "https://josapratama.com",
-      techStack: "Next.js + Portfolio API",
-      require2FA: false,
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: "app_guidepath",
-      name: "GuidePath Thesis & AI Research",
-      slug: "guidepath",
-      description: "Thesis Guidance Platform, Milestone Tracking, AI Research Gap & SINTA Journal Indexer",
-      icon: "🎓",
-      clientId: "ah_client_guidepath_7f8a9b",
-      clientSecret: "ah_secret_guidepath_4c5d6e7f8a9b0c1d2e3f4a",
-      redirectUris: [
-        "https://guidepath.josapratama.com/auth/callback",
-        "http://localhost:8000/auth/callback",
-      ],
-      homepageUrl: "https://guidepath.josapratama.com",
-      techStack: "Laravel 11 + Inertia React",
-      require2FA: false,
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    },
-  ];
-
-  const users: AuthUser[] = [
-    {
-      id: "usr_josa_root",
-      email: "josapratama@minihost.local",
-      username: "josapratama",
-      name: "Josa Pratama",
-      passwordHash: defaultPassHash,
-      globalRole: "superadmin",
-      appRoles: {
-        minihost: "superadmin",
-        "polyglot-hub": "superadmin",
-        uploadbox: "superadmin",
-        wabridge: "superadmin",
-        "nexus-chat": "superadmin",
-        "uml-flow": "superadmin",
-        "arsip-digital": "superadmin",
-        "irma-iryani": "superadmin",
-        portfolio: "superadmin",
-        guidepath: "superadmin",
-      },
-      twoFactorEnabled: false,
-      twoFactorSecret: "JOSA2FASECRETKEY2026",
-      phoneWhatsapp: "6281234567890",
-      isActive: true,
-      lastLoginAt: now,
-      createdAt: now,
-      updatedAt: now,
-    },
-  ];
-
-  const settings: AuthHubSettings = {
-    allowPublicRegistration: true,
-    requireAdminApproval: false,
-    defaultMemberRole: "member",
-    publicClientSlugs: ["guidepath", "nexus-chat", "polyglot-hub", "portfolio", "uploadbox", "uml-flow"],
-  };
-
-  return {
-    settings,
-    clients,
-    users,
-    authCodes: [],
-    sessions: [],
-    auditLogs: [],
-  };
-}
-
-class AuthHubDatabase {
+export class AuthHubDatabase {
   private data: AuthHubSchema;
 
   constructor() {
@@ -455,7 +80,6 @@ class AuthHubDatabase {
           updatedAt: now,
         });
 
-        // Ensure root superadmin has guidepath access
         const root = parsed.users.find((u) => u.id === "usr_josa_root");
         if (root && root.appRoles) {
           root.appRoles.guidepath = "superadmin";
@@ -563,7 +187,6 @@ class AuthHubDatabase {
 
     this.data.clients.push(client);
 
-    // Automatically grant superadmin users access to new client
     for (const user of this.data.users) {
       if (user.globalRole === "superadmin") {
         user.appRoles[cleanSlug] = "superadmin";
@@ -737,7 +360,6 @@ class AuthHubDatabase {
   }
 
   // ─── WebAuthn / YubiKey Hardware Credentials ─────────────────
-
   public addWebAuthnCredential(userId: string, cred: WebAuthnCredential): boolean {
     const user = this.data.users.find((u) => u.id === userId);
     if (!user) return false;
@@ -907,4 +529,4 @@ class AuthHubDatabase {
 }
 
 export const db = new AuthHubDatabase();
-
+export * from "./types.js";
