@@ -192,10 +192,12 @@ export function createInitialData(): AuthHubSchema {
       clientId: "ah_client_irma_5a6b7c",
       clientSecret: "ah_secret_irma_6c7d8e9f0a1b2c3d4e5f6a",
       redirectUris: [
+        "https://irma-iryani.josapratama.com/auth/callback",
         "https://irma.josapratama.com/auth/callback",
+        "http://localhost:3000/auth/callback",
         "http://localhost:5006/auth/callback",
       ],
-      homepageUrl: "https://irma.josapratama.com",
+      homepageUrl: "https://irma-iryani.josapratama.com",
       techStack: "Frontend + REST Backend",
       require2FA: false,
       isActive: true,
@@ -212,6 +214,9 @@ export function createInitialData(): AuthHubSchema {
       clientSecret: "ah_secret_portfolio_3e4f5a6b7c8d9e0f1a2b3c",
       redirectUris: [
         "https://josapratama.com/auth/callback",
+        "https://portfolio.josapratama.com/auth/callback",
+        "http://localhost:5173/auth/callback",
+        "http://localhost:3000/auth/callback",
         "http://localhost:5007/auth/callback",
       ],
       homepageUrl: "https://josapratama.com",
@@ -270,13 +275,40 @@ export function createInitialData(): AuthHubSchema {
       createdAt: now,
       updatedAt: now,
     },
+    {
+      id: "usr_irma_dedicated",
+      email: "irma@josapratama.com",
+      username: "irmairyani",
+      name: "Irma Iryani",
+      passwordHash: defaultPassHash,
+      globalRole: "member",
+      appRoles: {
+        "irma-iryani": "admin",
+        portfolio: "none",
+        minihost: "none",
+        "polyglot-hub": "none",
+        uploadbox: "none",
+        wabridge: "none",
+        "nexus-chat": "none",
+        "uml-flow": "none",
+        "arsip-digital": "none",
+        guidepath: "none",
+      },
+      twoFactorEnabled: false,
+      twoFactorSecret: "IRMA2FASECRETKEY2026",
+      phoneWhatsapp: "",
+      isActive: true,
+      lastLoginAt: now,
+      createdAt: now,
+      updatedAt: now,
+    },
   ];
 
   const settings: AuthHubSettings = {
-    allowPublicRegistration: true,
-    requireAdminApproval: false,
+    allowPublicRegistration: false,
+    requireAdminApproval: true,
     defaultMemberRole: "member",
-    publicClientSlugs: ["guidepath", "nexus-chat", "polyglot-hub", "portfolio", "uploadbox", "uml-flow"],
+    publicClientSlugs: ["guidepath", "nexus-chat", "polyglot-hub", "uploadbox", "uml-flow"],
   };
 
   return {
