@@ -494,8 +494,11 @@ class AuthHubDatabase {
         allowPublicRegistration: true,
         requireAdminApproval: false,
         defaultMemberRole: "member",
-        publicClientSlugs: ["nexus-chat", "polyglot-hub", "portfolio", "uploadbox", "uml-flow"],
+        publicClientSlugs: ["guidepath", "nexus-chat", "polyglot-hub", "portfolio", "uploadbox", "uml-flow"],
       };
+      this.save();
+    } else if (!this.data.settings.publicClientSlugs.includes("guidepath")) {
+      this.data.settings.publicClientSlugs.push("guidepath");
       this.save();
     }
     return this.data.settings;

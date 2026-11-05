@@ -1193,7 +1193,7 @@
                 >
                   <span v-if="loginLoading" class="animate-spin text-base">⏳</span>
                   <span v-else>🛡️</span>
-                  <span>{{ loginLoading ? 'Memverifikasi...' : 'Masuk ke AuthHub' }}</span>
+                  <span>{{ loginLoading ? 'Memverifikasi...' : (oauthClientInfo ? `Masuk ke ${oauthClientInfo.name}` : 'Masuk ke AuthHub') }}</span>
                 </button>
               </form>
 
@@ -1794,13 +1794,15 @@ async function handleRegister() {
     }
 
     regSuccessMessage.value = data.message || "Pendaftaran akun berhasil!";
+    const registeredUser = regForm.value.username || regForm.value.email;
     regForm.value = { name: "", email: "", username: "", password: "", confirmPassword: "" };
 
     if (!data.requireApproval) {
-      showToast("Pendaftaran sukses! Silakan masuk dengan akun baru.");
+      showToast("Pendaftaran sukses! Silakan masuk dengan akun baru Anda.");
+      loginForm.value.identifier = registeredUser;
       setTimeout(() => {
         authPortalTab.value = "login";
-      }, 1500);
+      }, 1200);
     }
   } catch (err: any) {
     regError.value = err.message || "Gagal menghubungi server.";
@@ -1814,6 +1816,49 @@ async function handleAdminLogin() {
   loginError.value = "";
   loginDemoTotp.value = "";
 
+  // 1. IF THIS IS AN OAUTH / SSO REQUEST (e.g. from GuidePath, NexusChat, etc.)
+  // We perform direct SSO authentication which allows ANY registered active member/student/admin
+  if (oauthClientInfo.value) {
+    try {
+      const authRes = await fetch("/api/v1/auth/authorize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          identifier: loginForm.value.identifier,
+          password: loginForm.value.password,
+          totpCode: loginForm.value.totpCode,
+          clientId: oauthClientInfo.value.clientId || oauthClientInfo.value.slug,
+          clientSlug: oauthClientInfo.value.slug,
+          redirectUri: oauthClientInfo.value.redirectUri,
+          state: oauthClientInfo.value.state || "sso",
+        }),
+      });
+      const authData = await authRes.json();
+      if (!authRes.ok) {
+        loginError.value = authData.error || "Autentikasi SSO gagal.";
+        if (authData.require2FA) {
+          loginRequire2fa.value = true;
+          loginDemoTotp.value = authData.demoHint || "";
+        }
+        return;
+      }
+
+      if (authData.redirectUri) {
+        showToast(`✅ Autentikasi SSO sukses! Mengalihkan ke ${oauthClientInfo.value.name}...`);
+        setTimeout(() => {
+          window.location.href = authData.redirectUri;
+        }, 500);
+        return;
+      }
+    } catch (oauthErr: any) {
+      loginError.value = oauthErr.message || "Gagal menghubungi server SSO.";
+    } finally {
+      loginLoading.value = false;
+    }
+    return;
+  }
+
+  // 2. OTHERWISE: DIRECT LOGIN TO AUTHHUB MANAGEMENT DASHBOARD (Admin Only)
   try {
     const res = await fetch("/api/admin/login", {
       method: "POST",
@@ -1835,33 +1880,6 @@ async function handleAdminLogin() {
     currentAdmin.value = data.user;
     isLoggedIn.value = true;
     showToast(`Selamat datang kembali, ${data.user.name}!`);
-
-    // If redirected by an OAuth client (e.g. GuidePath), authorize and redirect back!
-    if (oauthClientInfo.value) {
-      try {
-        const authRes = await fetch("/api/v1/auth/authorize", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            identifier: loginForm.value.identifier,
-            password: loginForm.value.password,
-            totpCode: loginForm.value.totpCode,
-            clientId: oauthClientInfo.value.clientId || oauthClientInfo.value.slug,
-            redirectUri: oauthClientInfo.value.redirectUri,
-          }),
-        });
-        const authData = await authRes.json();
-        if (authData.redirectUri) {
-          showToast(`✅ Autentikasi SSO sukses! Mengalihkan ke ${oauthClientInfo.value.name}...`);
-          setTimeout(() => {
-            window.location.href = authData.redirectUri;
-          }, 600);
-          return;
-        }
-      } catch (oauthErr) {
-        console.error("SSO redirect error", oauthErr);
-      }
-    }
 
     await fetchOverview();
     await fetchSdkSnippets();

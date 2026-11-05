@@ -1200,10 +1200,14 @@ app.post("/api/v1/auth/authorize", (req: Request, res: Response) => {
   clearRateLimit(rateLimitKey);
 
   // Check RBAC role for target application
+  const hubSettings = db.getSettings();
+  const isPublicClient = (hubSettings.publicClientSlugs || []).includes(client.slug);
   const appRole: AppRole =
     user.globalRole === "superadmin"
       ? "superadmin"
-      : user.appRoles[client.slug] || "none";
+      : (user.appRoles && user.appRoles[client.slug] && user.appRoles[client.slug] !== "none")
+        ? user.appRoles[client.slug]
+        : (isPublicClient ? "viewer" : "none");
 
   if (appRole === "none") {
     db.addAuditLog({
@@ -1228,6 +1232,10 @@ app.post("/api/v1/auth/authorize", (req: Request, res: Response) => {
     scopes,
   });
 
+  const stateVal = (req.body && req.body.state) ? String(req.body.state) : "sso_ok";
+  const separator = targetRedirect.includes("?") ? "&" : "?";
+  const finalRedirectUri = `${targetRedirect}${separator}code=${encodeURIComponent(authCode.code)}&state=${encodeURIComponent(stateVal)}`;
+
   db.addAuditLog({
     event: "OAUTH_CODE_ISSUED",
     userEmail: user.email,
@@ -1239,7 +1247,7 @@ app.post("/api/v1/auth/authorize", (req: Request, res: Response) => {
 
   res.json({
     authorizationCode: authCode.code,
-    redirectUri: `${targetRedirect}?code=${authCode.code}&state=sso_ok`,
+    redirectUri: finalRedirectUri,
     expiresIn: 300,
     client: {
       name: client.name,
