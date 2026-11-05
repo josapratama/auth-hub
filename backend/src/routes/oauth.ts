@@ -1,9 +1,40 @@
 import { Router, type Request, type Response } from "express";
 import { db, type AppRole } from "../db.js";
-import { verifyPassword, signJwt, verifyJwt, verifyTotpCode, generateTotpCode } from "../crypto.js";
+import { verifyPassword, signJwt, verifyJwt, verifyTotpCode, generateTotpCode, getPublicJwks } from "../crypto.js";
 import { getClientIp, isRateLimited, recordFailedAttempt, clearRateLimit } from "../utils/rateLimit.js";
+import { parseDeviceInfo } from "../utils/deviceParser.js";
 
 export const oauthRouter = Router();
+
+/**
+ * 0. OIDC Discovery Endpoint
+ * GET /.well-known/openid-configuration
+ */
+oauthRouter.get("/.well-known/openid-configuration", (req: Request, res: Response) => {
+  const host = `${req.protocol}://${req.get("host")}`;
+  res.json({
+    issuer: host,
+    authorization_endpoint: `${host}/oauth/authorize`,
+    token_endpoint: `${host}/api/v1/auth/token`,
+    userinfo_endpoint: `${host}/api/v1/auth/verify`,
+    jwks_uri: `${host}/.well-known/jwks.json`,
+    response_types_supported: ["code", "token"],
+    subject_types_supported: ["public"],
+    id_token_signing_alg_values_supported: ["RS256", "HS256"],
+    scopes_supported: ["openid", "profile", "email", "roles", "permissions"],
+    token_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic"],
+    claims_supported: ["sub", "iss", "email", "name", "appRole", "permissions", "globalRole", "sid"],
+  });
+});
+
+/**
+ * 0. JWKS Public Keys Endpoint
+ * GET /.well-known/jwks.json
+ */
+oauthRouter.get("/.well-known/jwks.json", (_req: Request, res: Response) => {
+  res.setHeader("Cache-Control", "public, max-age=3600");
+  res.json(getPublicJwks());
+});
 
 /**
  * GET /oauth/authorize
@@ -47,7 +78,7 @@ oauthRouter.post("/api/v1/auth/authorize", (req: Request, res: Response) => {
     clientId,
     clientSlug,
     redirectUri,
-    scopes = ["openid", "profile", "email", "roles"],
+    scopes = ["openid", "profile", "email", "roles", "permissions"],
     state = "sso",
   } = req.body;
 
@@ -162,13 +193,14 @@ oauthRouter.post("/api/v1/auth/authorize", (req: Request, res: Response) => {
       email: user.email,
       name: user.name,
       appRole,
+      permissions: user.permissions?.[client.slug] || [],
     },
   });
 });
 
 /**
  * POST /api/v1/auth/token
- * Exchange authorization_code + client_secret for JWT Token
+ * Exchange authorization_code + client_secret for Signed RS256 JWT Token
  */
 oauthRouter.post("/api/v1/auth/token", (req: Request, res: Response) => {
   const { code, clientId, clientSecret, grantType = "authorization_code" } = req.body;
@@ -206,6 +238,9 @@ oauthRouter.post("/api/v1/auth/token", (req: Request, res: Response) => {
       ? "superadmin"
       : user.appRoles[client.slug] || "viewer";
 
+  const permissions = user.permissions?.[client.slug] || client.availablePermissions || [];
+  const deviceInfo = parseDeviceInfo(req);
+
   const session = db.createSession({
     userId: user.id,
     userEmail: user.email,
@@ -213,8 +248,10 @@ oauthRouter.post("/api/v1/auth/token", (req: Request, res: Response) => {
     clientSlug: client.slug,
     clientName: client.name,
     appRole,
+    permissions,
     ipAddress: ip,
     userAgent: (req.headers["user-agent"] as string) || "OAuth2 Client Service",
+    deviceInfo,
     ttlSeconds: 86400,
   });
 
@@ -227,6 +264,7 @@ oauthRouter.post("/api/v1/auth/token", (req: Request, res: Response) => {
       clientId: client.clientId,
       clientSlug: client.slug,
       appRole,
+      permissions,
       scopes: authCode.scopes,
       sid: session.id,
     },
@@ -239,7 +277,7 @@ oauthRouter.post("/api/v1/auth/token", (req: Request, res: Response) => {
     clientSlug: client.slug,
     ipAddress: ip,
     status: "success",
-    details: `Signed JWT issued for ${user.email} in ${client.name} (Role: ${appRole.toUpperCase()}, Session: ${session.id})`,
+    details: `Signed RS256 JWT issued for ${user.email} in ${client.name} (Role: ${appRole.toUpperCase()}, Session: ${session.id})`,
   });
 
   res.json({
@@ -253,6 +291,7 @@ oauthRouter.post("/api/v1/auth/token", (req: Request, res: Response) => {
       username: user.username,
       name: user.name,
       appRole,
+      permissions,
       globalRole: user.globalRole,
     },
     client: {
@@ -305,6 +344,7 @@ oauthRouter.post("/api/v1/auth/verify", (req: Request, res: Response) => {
       name: verified.payload.name,
       globalRole: verified.payload.globalRole,
       appRole: verified.payload.appRole,
+      permissions: verified.payload.permissions || [],
       scopes: verified.payload.scopes,
     },
     sessionId: verified.payload.sid,

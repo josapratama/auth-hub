@@ -8,7 +8,7 @@ const emit = defineEmits(["login-success"]);
 const { setAuth } = useAuth();
 const { showToast } = useToast();
 
-const authTab = ref<"login" | "register">("login");
+const authTab = ref<"login" | "register" | "forgot">("login");
 const loginMode = ref<"password" | "yubikey">("password");
 
 // OAuth query parameters
@@ -50,6 +50,15 @@ const regForm = ref({
 const regLoading = ref(false);
 const regError = ref("");
 const regSuccessMessage = ref("");
+
+// Forgot Password State
+const forgotStep = ref<1 | 2>(1);
+const forgotIdentifier = ref("");
+const forgotOtp = ref("");
+const forgotNewPassword = ref("");
+const forgotLoading = ref(false);
+const forgotMessage = ref("");
+const forgotError = ref("");
 
 onMounted(() => {
   supportsWebAuthn.value = browserSupportsWebAuthn();
@@ -154,7 +163,6 @@ async function handleYubiKeyLogin() {
   yubikeyError.value = "";
 
   try {
-    // 1. Get Authentication Challenge Options
     const optRes = await fetch("/api/webauthn/login/options", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -167,10 +175,8 @@ async function handleYubiKeyLogin() {
       return;
     }
 
-    // 2. Prompt native WebAuthn (YubiKey PIN + Touch)
     const asseResp = await startAuthentication(optData.options);
 
-    // 3. Verify on backend
     const verifyRes = await fetch("/api/webauthn/login/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -266,13 +272,87 @@ async function handleRegister() {
     regLoading.value = false;
   }
 }
+
+async function handleRequestOtp() {
+  forgotError.value = "";
+  forgotMessage.value = "";
+  if (!forgotIdentifier.value) {
+    forgotError.value = "Masukkan email atau username Anda.";
+    return;
+  }
+
+  forgotLoading.value = true;
+  try {
+    const res = await fetch("/api/v1/auth/forgot-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier: forgotIdentifier.value }),
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      forgotMessage.value = data.message || "Kode OTP telah dikirim ke email Anda.";
+      if (data.demoOtp) {
+        forgotOtp.value = data.demoOtp;
+      }
+      forgotStep.value = 2;
+    } else {
+      forgotError.value = data.error || "Gagal meminta kode reset.";
+    }
+  } catch (err: any) {
+    forgotError.value = err.message || "Gagal menghubungi server.";
+  } finally {
+    forgotLoading.value = false;
+  }
+}
+
+async function handleCompleteReset() {
+  forgotError.value = "";
+  if (!forgotOtp.value || !forgotNewPassword.value) {
+    forgotError.value = "Kode OTP dan password baru wajib diisi.";
+    return;
+  }
+  if (forgotNewPassword.value.length < 6) {
+    forgotError.value = "Password baru minimal 6 karakter.";
+    return;
+  }
+
+  forgotLoading.value = true;
+  try {
+    const res = await fetch("/api/v1/auth/reset-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        otpOrToken: forgotOtp.value,
+        newPassword: forgotNewPassword.value,
+      }),
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      showToast("✅ Password berhasil diubah! Silakan login.");
+      loginForm.value.identifier = forgotIdentifier.value;
+      loginForm.value.password = forgotNewPassword.value;
+      authTab.value = "login";
+      forgotStep.value = 1;
+      forgotOtp.value = "";
+      forgotNewPassword.value = "";
+    } else {
+      forgotError.value = data.error || "Gagal mereset password.";
+    }
+  } catch (err: any) {
+    forgotError.value = err.message || "Gagal menghubungi server.";
+  } finally {
+    forgotLoading.value = false;
+  }
+}
 </script>
 
 <template>
   <div class="min-h-[calc(100vh-4.5rem)] flex items-center justify-center py-8 sm:py-12 px-4 sm:px-6">
     <div class="w-full max-w-md sm:max-w-lg space-y-4 sm:space-y-6">
       
-      <!-- OAuth Client Request Banner (if redirected from GuidePath or others) -->
+      <!-- OAuth Client Request Banner -->
       <div
         v-if="oauthClientInfo"
         class="p-4 rounded-2xl bg-gradient-to-r from-indigo-950/80 via-slate-900/90 to-violet-950/80 border border-indigo-500/40 shadow-xl shadow-indigo-950/40 flex items-center gap-3.5"
@@ -288,7 +368,7 @@ async function handleRegister() {
             {{ oauthClientInfo.name }}
           </div>
           <p class="text-[11px] text-slate-400 truncate">
-            Identitas Anda akan dibagikan dengan aman via token JWT
+            Identitas & peran Anda akan dibagikan via token RS256 JWT
           </p>
         </div>
       </div>
@@ -296,15 +376,27 @@ async function handleRegister() {
       <!-- Main Auth Card -->
       <div class="bg-slate-900/90 backdrop-blur-2xl border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl shadow-black/40 space-y-6">
         
-        <!-- Header & Tab Switcher (Login vs Register) -->
+        <!-- Header & Tab Switcher -->
         <div class="space-y-4">
           <div class="flex items-center justify-between">
             <div>
               <h1 class="text-xl sm:text-2xl font-extrabold text-white tracking-tight">
-                {{ authTab === 'login' ? 'Masuk ke Akun Anda' : 'Daftar Akun Baru' }}
+                {{
+                  authTab === 'login'
+                    ? 'Masuk ke Akun Anda'
+                    : authTab === 'register'
+                    ? 'Daftar Akun Baru'
+                    : 'Pemulihan Akun & Password'
+                }}
               </h1>
               <p class="text-xs text-slate-400 mt-0.5">
-                {{ authTab === 'login' ? 'Gunakan password atau kunci fisik YubiKey PIN' : 'Buat identitas SSO baru untuk ekosistem' }}
+                {{
+                  authTab === 'login'
+                    ? 'Gunakan password atau kunci fisik YubiKey PIN'
+                    : authTab === 'register'
+                    ? 'Buat identitas SSO baru untuk ekosistem'
+                    : 'Kirim kode OTP ke email terdaftar Anda'
+                }}
               </p>
             </div>
             <div class="w-10 h-10 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-lg">
@@ -337,7 +429,7 @@ async function handleRegister() {
         <!-- TAB 1: LOGIN (PASSWORD & YUBIKEY PIN)                      -->
         <!-- ═══════════════════════════════════════════════════════════ -->
         <div v-if="authTab === 'login'" class="space-y-5">
-          <!-- Method Toggle: Password vs YubiKey -->
+          <!-- Method Toggle -->
           <div class="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-950/60 border border-slate-800/60 text-xs font-semibold">
             <button
               type="button"
@@ -357,7 +449,7 @@ async function handleRegister() {
             </button>
           </div>
 
-          <!-- ─── SUB-MODE A: PASSWORD LOGIN ─── -->
+          <!-- SUB-MODE A: PASSWORD LOGIN -->
           <form v-if="loginMode === 'password'" @submit.prevent="handleLogin" class="space-y-4">
             <div v-if="loginError" class="p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300 flex items-start gap-2.5">
               <span class="text-base shrink-0">⚠️</span>
@@ -380,7 +472,16 @@ async function handleRegister() {
             </div>
 
             <div class="space-y-1.5">
-              <label class="text-xs font-bold text-slate-300">Password</label>
+              <div class="flex items-center justify-between">
+                <label class="text-xs font-bold text-slate-300">Password</label>
+                <button
+                  type="button"
+                  @click="authTab = 'forgot'"
+                  class="text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold cursor-pointer"
+                >
+                  Lupa password?
+                </button>
+              </div>
               <input
                 v-model="loginForm.password"
                 type="password"
@@ -437,7 +538,7 @@ async function handleRegister() {
             </div>
           </form>
 
-          <!-- ─── SUB-MODE B: YUBIKEY PIN HARDWARE LOGIN ─── -->
+          <!-- SUB-MODE B: YUBIKEY PIN HARDWARE LOGIN -->
           <div v-else-if="loginMode === 'yubikey'" class="space-y-4">
             <div v-if="yubikeyError" class="p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300 flex items-start gap-2.5">
               <span class="text-base shrink-0">⚠️</span>
@@ -569,6 +670,93 @@ async function handleRegister() {
               <span v-else>✨</span>
               <span>{{ regLoading ? 'Mendaftarkan Akun...' : 'Daftar Sekarang' }}</span>
             </button>
+          </form>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <!-- TAB 3: FORGOT PASSWORD & OTP RESET FLOW                    -->
+        <!-- ═══════════════════════════════════════════════════════════ -->
+        <div v-else-if="authTab === 'forgot'" class="space-y-4">
+          <div v-if="forgotError" class="p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300">
+            {{ forgotError }}
+          </div>
+
+          <div v-if="forgotMessage" class="p-3.5 rounded-xl bg-indigo-500/15 border border-indigo-500/30 text-xs text-indigo-300">
+            {{ forgotMessage }}
+          </div>
+
+          <!-- STEP 1: Enter Email / Username -->
+          <form v-if="forgotStep === 1" @submit.prevent="handleRequestOtp" class="space-y-4">
+            <div class="space-y-1.5">
+              <label class="text-xs font-bold text-slate-300">Email atau Username Anda</label>
+              <input
+                v-model="forgotIdentifier"
+                type="text"
+                required
+                placeholder="nama@domain.com atau username"
+                class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/80 border border-slate-800 text-white text-sm focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div class="flex items-center justify-between pt-2">
+              <button
+                type="button"
+                @click="authTab = 'login'"
+                class="text-xs text-slate-400 hover:text-white cursor-pointer"
+              >
+                ← Kembali ke Login
+              </button>
+              <button
+                type="submit"
+                :disabled="forgotLoading"
+                class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md cursor-pointer disabled:opacity-50"
+              >
+                {{ forgotLoading ? 'Mengirim...' : 'Kirim Kode OTP' }}
+              </button>
+            </div>
+          </form>
+
+          <!-- STEP 2: Enter OTP & New Password -->
+          <form v-else-if="forgotStep === 2" @submit.prevent="handleCompleteReset" class="space-y-4">
+            <div class="space-y-1.5">
+              <label class="text-xs font-bold text-slate-300">Kode 6-Digit OTP Email</label>
+              <input
+                v-model="forgotOtp"
+                type="text"
+                maxlength="6"
+                required
+                placeholder="Contoh: 123456"
+                class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/80 border border-slate-800 text-white text-center font-mono text-lg tracking-widest focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div class="space-y-1.5">
+              <label class="text-xs font-bold text-slate-300">Password Baru</label>
+              <input
+                v-model="forgotNewPassword"
+                type="password"
+                required
+                placeholder="Minimal 6 karakter"
+                class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/80 border border-slate-800 text-white text-sm focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div class="flex items-center justify-between pt-2">
+              <button
+                type="button"
+                @click="forgotStep = 1"
+                class="text-xs text-slate-400 hover:text-white cursor-pointer"
+              >
+                ← Kirim Ulang OTP
+              </button>
+              <button
+                type="submit"
+                :disabled="forgotLoading"
+                class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md cursor-pointer disabled:opacity-50"
+              >
+                {{ forgotLoading ? 'Menyimpan...' : 'Simpan Password Baru' }}
+              </button>
+            </div>
           </form>
         </div>
 

@@ -14,6 +14,8 @@ import type {
   AuditLog,
   AuthHubSettings,
   AuthHubSchema,
+  PasswordResetToken,
+  SessionDeviceInfo,
 } from "./types.js";
 
 const DB_FILE = getDatabaseFilePath();
@@ -76,6 +78,13 @@ export class AuthHubDatabase {
           techStack: "Laravel 11 + Inertia React",
           require2FA: false,
           isActive: true,
+          backchannelLogoutUri: "https://guidepath.josapratama.com/api/sso/logout-callback",
+          availablePermissions: [
+            "guidepath:thesis_approve",
+            "guidepath:journal_upload",
+            "guidepath:milestone_edit",
+            "guidepath:export_reports",
+          ],
           createdAt: now,
           updatedAt: now,
         });
@@ -92,9 +101,44 @@ export class AuthHubDatabase {
           requireAdminApproval: false,
           defaultMemberRole: "member",
           publicClientSlugs: ["guidepath", "nexus-chat", "polyglot-hub", "portfolio", "uploadbox", "uml-flow"],
+          emailNotifications: {
+            enabled: true,
+            smtpHost: process.env.SMTP_HOST || "smtp.gmail.com",
+            smtpPort: Number(process.env.SMTP_PORT) || 587,
+            smtpSecure: false,
+            smtpUser: process.env.SMTP_USER || "",
+            smtpPass: process.env.SMTP_PASS || "",
+            fromAddress: process.env.SMTP_FROM || "auth@josapratama.com",
+            fromName: "AuthHub Security & SSO",
+            notifyPasswordReset: true,
+            notifyNewUserRegistration: true,
+            notifyNewDeviceLogin: true,
+            notifySessionRevoked: true,
+          },
         };
       } else if (!parsed.settings.publicClientSlugs.includes("guidepath")) {
         parsed.settings.publicClientSlugs.push("guidepath");
+      }
+
+      if (!parsed.settings.emailNotifications) {
+        parsed.settings.emailNotifications = {
+          enabled: true,
+          smtpHost: process.env.SMTP_HOST || "smtp.gmail.com",
+          smtpPort: Number(process.env.SMTP_PORT) || 587,
+          smtpSecure: false,
+          smtpUser: process.env.SMTP_USER || "",
+          smtpPass: process.env.SMTP_PASS || "",
+          fromAddress: process.env.SMTP_FROM || "auth@josapratama.com",
+          fromName: "AuthHub Security & SSO",
+          notifyPasswordReset: true,
+          notifyNewUserRegistration: true,
+          notifyNewDeviceLogin: true,
+          notifySessionRevoked: true,
+        };
+      }
+
+      if (!parsed.passwordResets) {
+        parsed.passwordResets = [];
       }
 
       this.data = parsed;
@@ -133,6 +177,9 @@ export class AuthHubDatabase {
     this.data.settings = {
       ...current,
       ...partial,
+      emailNotifications: partial.emailNotifications
+        ? { ...(current.emailNotifications || {}), ...partial.emailNotifications } as any
+        : current.emailNotifications,
     };
     this.save();
     return this.data.settings;
@@ -160,6 +207,8 @@ export class AuthHubDatabase {
     homepageUrl?: string;
     redirectUris?: string[];
     techStack?: string;
+    backchannelLogoutUri?: string;
+    availablePermissions?: string[];
   }): OAuthClient {
     const now = new Date().toISOString();
     const cleanSlug = payload.slug.toLowerCase().replace(/[^a-z0-9-_]/g, "-");
@@ -181,6 +230,12 @@ export class AuthHubDatabase {
       techStack: payload.techStack || "Fullstack App",
       require2FA: false,
       isActive: true,
+      backchannelLogoutUri: payload.backchannelLogoutUri,
+      availablePermissions: payload.availablePermissions || [
+        `${cleanSlug}:read`,
+        `${cleanSlug}:write`,
+        `${cleanSlug}:admin`,
+      ],
       createdAt: now,
       updatedAt: now,
     };
@@ -243,6 +298,7 @@ export class AuthHubDatabase {
     password: string;
     globalRole?: "superadmin" | "admin" | "member";
     appRoles?: Record<string, AppRole>;
+    permissions?: Record<string, string[]>;
   }): Omit<AuthUser, "passwordHash"> {
     const now = new Date().toISOString();
     const defaultRoles: Record<string, AppRole> = {};
@@ -259,6 +315,7 @@ export class AuthHubDatabase {
       passwordHash: hashPassword(payload.password),
       globalRole: payload.globalRole || "member",
       appRoles: { ...defaultRoles, ...(payload.appRoles || {}) },
+      permissions: payload.permissions || {},
       twoFactorEnabled: false,
       twoFactorSecret: crypto.randomBytes(10).toString("hex").toUpperCase(),
       isActive: true,
@@ -299,6 +356,7 @@ export class AuthHubDatabase {
       passwordHash: hashPassword(payload.password),
       globalRole: "member",
       appRoles: defaultRoles,
+      permissions: {},
       twoFactorEnabled: false,
       twoFactorSecret: crypto.randomBytes(10).toString("hex").toUpperCase(),
       isActive,
@@ -330,6 +388,21 @@ export class AuthHubDatabase {
     const user = this.data.users.find((u) => u.id === userId);
     if (!user) return undefined;
     user.appRoles[clientSlug] = role;
+    user.updatedAt = new Date().toISOString();
+    this.save();
+    const { passwordHash, ...safeUser } = user;
+    return safeUser;
+  }
+
+  public updateUserPermissions(
+    userId: string,
+    clientSlug: string,
+    permissions: string[]
+  ): Omit<AuthUser, "passwordHash"> | undefined {
+    const user = this.data.users.find((u) => u.id === userId);
+    if (!user) return undefined;
+    if (!user.permissions) user.permissions = {};
+    user.permissions[clientSlug] = permissions;
     user.updatedAt = new Date().toISOString();
     this.save();
     const { passwordHash, ...safeUser } = user;
@@ -402,6 +475,48 @@ export class AuthHubDatabase {
     );
   }
 
+  // ─── Password Reset Tokens ─────────────────────────────────
+  public createPasswordReset(userId: string, email: string): PasswordResetToken {
+    if (!this.data.passwordResets) this.data.passwordResets = [];
+
+    // Prune existing resets for this user
+    this.data.passwordResets = this.data.passwordResets.filter((p) => p.userId !== userId);
+
+    const token = `rst_${crypto.randomBytes(24).toString("hex")}`;
+    const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
+    const record: PasswordResetToken = {
+      token,
+      otp,
+      userId,
+      email,
+      expiresAt: Date.now() + 15 * 60 * 1000, // 15 mins
+      used: false,
+    };
+
+    this.data.passwordResets.push(record);
+    this.save();
+    return record;
+  }
+
+  public findPasswordReset(tokenOrOtp: string): PasswordResetToken | undefined {
+    if (!this.data.passwordResets) return undefined;
+    const clean = tokenOrOtp.trim();
+    return this.data.passwordResets.find(
+      (p) =>
+        (p.token === clean || p.otp === clean) &&
+        !p.used &&
+        p.expiresAt > Date.now()
+    );
+  }
+
+  public consumePasswordReset(tokenOrOtp: string): PasswordResetToken | undefined {
+    const record = this.findPasswordReset(tokenOrOtp);
+    if (!record) return undefined;
+    record.used = true;
+    this.save();
+    return record;
+  }
+
   // ─── OAuth2 Authorization Codes ────────────────────────────
   public createAuthCode(payload: {
     userId: string;
@@ -449,8 +564,10 @@ export class AuthHubDatabase {
     clientSlug: string;
     clientName: string;
     appRole: AppRole;
+    permissions?: string[];
     ipAddress: string;
     userAgent: string;
+    deviceInfo?: SessionDeviceInfo;
     ttlSeconds?: number;
   }): AuthSession {
     const ttl = payload.ttlSeconds || 86400;
@@ -465,8 +582,10 @@ export class AuthHubDatabase {
       clientSlug: payload.clientSlug,
       clientName: payload.clientName,
       appRole: payload.appRole,
+      permissions: payload.permissions || [],
       ipAddress: payload.ipAddress,
       userAgent: payload.userAgent,
+      deviceInfo: payload.deviceInfo,
       issuedAt: now.toISOString(),
       expiresAt: exp.toISOString(),
       revoked: false,

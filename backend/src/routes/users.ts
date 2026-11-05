@@ -23,7 +23,7 @@ usersRouter.get("/", (_req: AuthRequest, res: Response) => {
  * Admin manually creates a new user
  */
 usersRouter.post("/", (req: AuthRequest, res: Response) => {
-  const { email, username, name, password, globalRole, appRoles } = req.body;
+  const { email, username, name, password, globalRole, appRoles, permissions } = req.body;
 
   if (!email || !username || !name || !password) {
     return res.status(400).json({ error: "Email, Username, Name, and Password are required" });
@@ -42,6 +42,7 @@ usersRouter.post("/", (req: AuthRequest, res: Response) => {
     password,
     globalRole: globalRole || "member",
     appRoles,
+    permissions,
   });
 
   db.addAuditLog({
@@ -116,6 +117,40 @@ usersRouter.post("/:id/role", (req: AuthRequest, res: Response) => {
     ipAddress: getClientIp(req),
     status: "info",
     details: `Updated role for ${updated.email} in ${clientSlug} to '${role.toUpperCase()}'`,
+  });
+
+  res.json({ user: updated });
+});
+
+/**
+ * POST /api/users/:id/permissions
+ * Update granular permissions for a client application
+ */
+usersRouter.post("/:id/permissions", (req: AuthRequest, res: Response) => {
+  const targetId = String(req.params.id);
+  const { clientSlug, permissions } = req.body;
+
+  if (!clientSlug || !Array.isArray(permissions)) {
+    return res.status(400).json({ error: "clientSlug and permissions array are required" });
+  }
+
+  const user = db.findUserByIdentifier(targetId);
+  if (!user) {
+    return res.status(404).json({ error: "User not found" });
+  }
+
+  const updated = db.updateUserPermissions(targetId, clientSlug, permissions);
+  if (!updated) {
+    return res.status(500).json({ error: "Failed to update permissions" });
+  }
+
+  db.addAuditLog({
+    event: "ROLE_UPDATED",
+    userEmail: updated.email,
+    clientSlug,
+    ipAddress: getClientIp(req),
+    status: "info",
+    details: `Updated granular permissions for ${updated.email} in ${clientSlug}: [${permissions.join(", ")}]`,
   });
 
   res.json({ user: updated });

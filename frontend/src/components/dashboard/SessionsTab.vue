@@ -25,7 +25,7 @@ async function revokeSingle(sessionId: string) {
       body: JSON.stringify({ sessionId }),
     });
     if (res.ok) {
-      showToast("Sesi berhasil di-revoke!");
+      showToast("Sesi berhasil di-revoke & webhook logout dikirimkan!");
       emit("refresh-data");
     }
   } catch (err: any) {
@@ -34,7 +34,7 @@ async function revokeSingle(sessionId: string) {
 }
 
 async function killswitchApp(clientSlug: string) {
-  if (!confirm(`Putuskan seluruh sesi aktif untuk aplikasi '${clientSlug}'?`)) return;
+  if (!confirm(`Putuskan seluruh sesi aktif untuk aplikasi '${clientSlug}'? Webhook logout akan dikirimkan ke aplikasi.`)) return;
   try {
     const res = await apiFetch("/api/sessions/killswitch-app", {
       method: "POST",
@@ -70,10 +70,10 @@ async function emergencyKillswitchAll() {
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
       <div>
         <h2 class="text-xl sm:text-2xl font-extrabold text-white tracking-tight flex items-center gap-2">
-          <span>🌐 Sesi Aktif & Global Kill-Switch</span>
+          <span>🌐 Sesi Aktif, Telemetri Perangkat & Kill-Switch</span>
         </h2>
         <p class="text-xs sm:text-sm text-slate-400">
-          Monitor sesi login yang sedang berlangsung dan putuskan akses kapan saja secara instan.
+          Monitor browser, sistem operasi, lokasi IP, serta mekanisme pemutusan sesi terpusat dengan Back-Channel Logout.
         </p>
       </div>
 
@@ -99,9 +99,13 @@ async function emergencyKillswitchAll() {
         class="p-4 sm:p-5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4"
       >
         <div class="flex items-start sm:items-center gap-3.5">
-          <div class="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-lg shrink-0">
-            💻
+          <!-- Device Icon -->
+          <div class="w-11 h-11 rounded-2xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-xl shrink-0">
+            <span v-if="s.deviceInfo?.device === 'Smartphone'">📱</span>
+            <span v-else-if="s.deviceInfo?.device === 'Tablet'">📟</span>
+            <span v-else>🖥️</span>
           </div>
+
           <div class="min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
               <span class="text-sm font-bold text-white">{{ s.userName }}</span>
@@ -113,12 +117,18 @@ async function emergencyKillswitchAll() {
                 {{ s.appRole }}
               </span>
             </div>
-            <div class="flex items-center gap-3 text-[11px] text-slate-400 font-mono mt-1 flex-wrap">
-              <span>IP: {{ s.ipAddress }}</span>
-              <span>•</span>
-              <span class="truncate max-w-[220px]">{{ s.userAgent }}</span>
-              <span>•</span>
-              <span>Kadaluwarsa: {{ new Date(s.expiresAt).toLocaleTimeString('id-ID') }}</span>
+
+            <!-- Device Telemetry & Location Badges -->
+            <div class="flex items-center gap-2 text-[11px] text-slate-400 mt-1.5 flex-wrap">
+              <span class="px-2 py-0.5 rounded-md bg-slate-950 border border-slate-800 text-slate-300 font-medium">
+                {{ s.deviceInfo?.browser || 'Browser' }} • {{ s.deviceInfo?.os || 'OS' }}
+              </span>
+              <span class="px-2 py-0.5 rounded-md bg-slate-950 border border-slate-800 text-emerald-400 font-medium">
+                📍 {{ s.deviceInfo?.location || s.ipAddress }}
+              </span>
+              <span class="font-mono text-slate-500 text-[10px]">
+                IP: {{ s.ipAddress }} • Kadaluwarsa: {{ new Date(s.expiresAt).toLocaleTimeString('id-ID') }}
+              </span>
             </div>
           </div>
         </div>
@@ -127,7 +137,7 @@ async function emergencyKillswitchAll() {
           <button
             @click="killswitchApp(s.clientSlug)"
             class="px-3 py-1.5 rounded-xl border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 text-xs font-semibold cursor-pointer"
-            title="Putus seluruh sesi di aplikasi ini"
+            title="Putus seluruh sesi di aplikasi ini dan kirimkan webhook"
           >
             Kill App
           </button>

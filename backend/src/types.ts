@@ -13,6 +13,8 @@ export interface OAuthClient {
   techStack: string;
   require2FA: boolean;
   isActive: boolean;
+  backchannelLogoutUri?: string;
+  availablePermissions?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -38,6 +40,8 @@ export interface AuthUser {
   globalRole: "superadmin" | "admin" | "member";
   /** Map of clientSlug -> role */
   appRoles: Record<string, AppRole>;
+  /** Map of clientSlug -> specific permission keys */
+  permissions?: Record<string, string[]>;
   twoFactorEnabled: boolean;
   twoFactorSecret?: string;
   webAuthnCredentials?: WebAuthnCredential[];
@@ -60,6 +64,14 @@ export interface AuthCodeRecord {
   used: boolean;
 }
 
+export interface SessionDeviceInfo {
+  browser: string;
+  os: string;
+  device: string;
+  ip: string;
+  location: string;
+}
+
 export interface AuthSession {
   id: string;
   userId: string;
@@ -68,11 +80,22 @@ export interface AuthSession {
   clientSlug: string;
   clientName: string;
   appRole: AppRole;
+  permissions?: string[];
   ipAddress: string;
   userAgent: string;
+  deviceInfo?: SessionDeviceInfo;
   issuedAt: string;
   expiresAt: string;
   revoked: boolean;
+}
+
+export interface PasswordResetToken {
+  token: string;
+  otp: string;
+  userId: string;
+  email: string;
+  expiresAt: number;
+  used: boolean;
 }
 
 export interface AuditLog {
@@ -100,7 +123,11 @@ export interface AuditLog {
     | "WEBAUTHN_KEY_REGISTERED"
     | "WEBAUTHN_KEY_DELETED"
     | "WEBAUTHN_LOGIN_SUCCESS"
-    | "WEBAUTHN_LOGIN_FAILED";
+    | "WEBAUTHN_LOGIN_FAILED"
+    | "PASSWORD_RESET_REQUESTED"
+    | "PASSWORD_RESET_COMPLETED"
+    | "BACKCHANNEL_LOGOUT_SENT"
+    | "EMAIL_NOTIFICATION_SENT";
   userEmail: string;
   clientSlug?: string;
   ipAddress: string;
@@ -108,11 +135,28 @@ export interface AuditLog {
   details: string;
 }
 
+export interface EmailNotificationSettings {
+  enabled: boolean; // Master toggle
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: boolean;
+  smtpUser: string;
+  smtpPass: string;
+  fromAddress: string;
+  fromName: string;
+  // Granular individual notification toggles:
+  notifyPasswordReset: boolean;
+  notifyNewUserRegistration: boolean;
+  notifyNewDeviceLogin: boolean;
+  notifySessionRevoked: boolean;
+}
+
 export interface AuthHubSettings {
   allowPublicRegistration: boolean;
   requireAdminApproval: boolean;
   defaultMemberRole: "viewer" | "member";
   publicClientSlugs: string[];
+  emailNotifications?: EmailNotificationSettings;
 }
 
 export interface AuthHubSchema {
@@ -122,4 +166,5 @@ export interface AuthHubSchema {
   authCodes: AuthCodeRecord[];
   sessions: AuthSession[];
   auditLogs: AuditLog[];
+  passwordResets?: PasswordResetToken[];
 }

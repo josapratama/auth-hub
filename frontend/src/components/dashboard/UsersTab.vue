@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from "vue";
 import type { AuthUser, OAuthClient, AppRole } from "../../types/index.js";
 import { useAuth } from "../../composables/useAuth.js";
 import { useToast } from "../../composables/useToast.js";
@@ -11,6 +12,9 @@ const props = defineProps<{
 const emit = defineEmits(["add-user", "register-yubikey", "refresh-data"]);
 const { apiFetch } = useAuth();
 const { showToast } = useToast();
+
+const selectedUserForPerms = ref<AuthUser | null>(null);
+const selectedClientSlug = ref<string>("");
 
 async function toggleActive(userId: string) {
   try {
@@ -44,6 +48,43 @@ async function updateRole(userId: string, clientSlug: string, newRole: AppRole) 
     showToast(err.message || "Gagal menghubungi server");
   }
 }
+
+function openPermsModal(user: AuthUser, clientSlug: string) {
+  selectedUserForPerms.value = user;
+  selectedClientSlug.value = clientSlug;
+}
+
+async function toggleUserPermission(permKey: string) {
+  if (!selectedUserForPerms.value || !selectedClientSlug.value) return;
+
+  const user = selectedUserForPerms.value;
+  const current = (user.permissions?.[selectedClientSlug.value] || []);
+  let updated: string[];
+
+  if (current.includes(permKey)) {
+    updated = current.filter((p) => p !== permKey);
+  } else {
+    updated = [...current, permKey];
+  }
+
+  try {
+    const res = await apiFetch(`/api/users/${user.id}/permissions`, {
+      method: "POST",
+      body: JSON.stringify({
+        clientSlug: selectedClientSlug.value,
+        permissions: updated,
+      }),
+    });
+    if (res.ok) {
+      if (!user.permissions) user.permissions = {};
+      user.permissions[selectedClientSlug.value] = updated;
+      showToast(`Izin '${permKey}' berhasil diperbarui`);
+      emit("refresh-data");
+    }
+  } catch (err: any) {
+    showToast(err.message || "Gagal memperbarui izin");
+  }
+}
 </script>
 
 <template>
@@ -51,10 +92,10 @@ async function updateRole(userId: string, clientSlug: string, newRole: AppRole) 
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
       <div>
         <h2 class="text-xl sm:text-2xl font-extrabold text-white tracking-tight flex items-center gap-2">
-          <span>👥 Direktori Pengguna & Hak Akses (RBAC)</span>
+          <span>👥 Direktori Pengguna & Hak Akses (RBAC + Permissions)</span>
         </h2>
         <p class="text-xs sm:text-sm text-slate-400">
-          Kelola peran pengguna (Superadmin, Admin, Viewer, None) dan otentikasi hardware key per aplikasi.
+          Kelola peran pengguna (Superadmin, Admin, Viewer, None) serta izin granular (Permissions) per aplikasi.
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
@@ -73,7 +114,7 @@ async function updateRole(userId: string, clientSlug: string, newRole: AppRole) 
       </div>
     </div>
 
-    <!-- Users Cards List (Responsive for mobile & desktop) -->
+    <!-- Users Cards List -->
     <div class="space-y-4">
       <div
         v-for="u in users"
@@ -112,7 +153,6 @@ async function updateRole(userId: string, clientSlug: string, newRole: AppRole) 
             </div>
           </div>
 
-          <!-- Quick Action Buttons -->
           <div class="flex items-center gap-2 self-start sm:self-auto">
             <button
               v-if="u.id !== 'usr_josa_root'"
@@ -129,7 +169,7 @@ async function updateRole(userId: string, clientSlug: string, newRole: AppRole) 
           </div>
         </div>
 
-        <!-- YubiKey Hardware Credentials Pill -->
+        <!-- Hardware Key Pill -->
         <div v-if="u.webAuthnKeys && u.webAuthnKeys.length" class="flex items-center gap-2 flex-wrap text-xs pt-1">
           <span class="text-slate-400 text-[11px] font-semibold">Kunci Fisik YubiKey:</span>
           <div
@@ -145,7 +185,7 @@ async function updateRole(userId: string, clientSlug: string, newRole: AppRole) 
         <!-- RBAC App Role Matrix Selector -->
         <div class="pt-3 border-t border-slate-800/80 space-y-2">
           <div class="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-            Hak Akses Aplikasi (RBAC Per Client)
+            Hak Akses Aplikasi & Granular Permissions
           </div>
           <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
             <div
@@ -168,8 +208,65 @@ async function updateRole(userId: string, clientSlug: string, newRole: AppRole) 
                 <option value="viewer">Viewer</option>
                 <option value="none">None (Ditolak)</option>
               </select>
+
+              <button
+                type="button"
+                @click="openPermsModal(u, c.slug)"
+                class="w-full text-left text-[10px] text-indigo-400 hover:text-indigo-300 font-mono underline truncate cursor-pointer"
+              >
+                Atur Izin ({{ (u.permissions?.[c.slug] || []).length }}) →
+              </button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Granular Permissions -->
+    <div
+      v-if="selectedUserForPerms"
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+    >
+      <div class="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-bold text-white">
+            Granular Permissions: {{ selectedClientSlug }}
+          </h3>
+          <button @click="selectedUserForPerms = null" class="text-slate-400 hover:text-white p-1 rounded-lg">✕</button>
+        </div>
+
+        <p class="text-xs text-slate-300">
+          Atur hak akses granular untuk <strong>{{ selectedUserForPerms.name }}</strong> pada aplikasi <code>{{ selectedClientSlug }}</code>:
+        </p>
+
+        <div class="space-y-2 max-h-60 overflow-y-auto">
+          <div
+            v-for="perm in (clients.find(c => c.slug === selectedClientSlug)?.availablePermissions || [
+              `${selectedClientSlug}:read`,
+              `${selectedClientSlug}:write`,
+              `${selectedClientSlug}:admin`
+            ])"
+            :key="perm"
+            @click="toggleUserPermission(perm)"
+            class="p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all text-xs"
+            :class="
+              (selectedUserForPerms.permissions?.[selectedClientSlug] || []).includes(perm)
+                ? 'bg-indigo-600/20 border-indigo-500/40 text-white'
+                : 'bg-slate-950 border-slate-800 text-slate-400'
+            "
+          >
+            <span class="font-mono">{{ perm }}</span>
+            <span v-if="(selectedUserForPerms.permissions?.[selectedClientSlug] || []).includes(perm)" class="text-indigo-400 font-bold">✓</span>
+          </div>
+        </div>
+
+        <div class="pt-2 flex justify-end">
+          <button
+            @click="selectedUserForPerms = null"
+            class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold cursor-pointer"
+          >
+            Selesai
+          </button>
         </div>
       </div>
     </div>

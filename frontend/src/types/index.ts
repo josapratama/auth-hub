@@ -13,6 +13,8 @@ export interface OAuthClient {
   techStack: string;
   require2FA: boolean;
   isActive: boolean;
+  backchannelLogoutUri?: string;
+  availablePermissions?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -33,12 +35,21 @@ export interface AuthUser {
   avatar?: string;
   globalRole: "superadmin" | "admin" | "member";
   appRoles: Record<string, AppRole>;
+  permissions?: Record<string, string[]>;
   twoFactorEnabled: boolean;
   twoFactorSecret?: string;
   currentTotpDemo?: string;
   webAuthnKeys?: WebAuthnKeyInfo[];
   isActive: boolean;
   createdAt: string;
+}
+
+export interface SessionDeviceInfo {
+  browser: string;
+  os: string;
+  device: string;
+  ip: string;
+  location: string;
 }
 
 export interface AuthSession {
@@ -49,8 +60,10 @@ export interface AuthSession {
   clientSlug: string;
   clientName: string;
   appRole: AppRole;
+  permissions?: string[];
   ipAddress: string;
   userAgent: string;
+  deviceInfo?: SessionDeviceInfo;
   issuedAt: string;
   expiresAt: string;
   revoked: boolean;
@@ -67,11 +80,27 @@ export interface AuditLog {
   details: string;
 }
 
+export interface EmailNotificationSettings {
+  enabled: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: boolean;
+  smtpUser: string;
+  smtpPass: string;
+  fromAddress: string;
+  fromName: string;
+  notifyPasswordReset: boolean;
+  notifyNewUserRegistration: boolean;
+  notifyNewDeviceLogin: boolean;
+  notifySessionRevoked: boolean;
+}
+
 export interface AuthHubSettings {
   allowPublicRegistration: boolean;
   requireAdminApproval: boolean;
   defaultMemberRole: "viewer" | "member";
   publicClientSlugs: string[];
+  emailNotifications?: EmailNotificationSettings;
 }
 
 export interface OverviewStats {

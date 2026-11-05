@@ -1,4 +1,6 @@
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 
 const JWT_SECRET =
   process.env.JWT_SECRET || "authhub-default-dev-secret-change-in-production";
@@ -18,6 +20,61 @@ function base64UrlDecode(input: string): string {
     str += "=";
   }
   return Buffer.from(str, "base64").toString("utf8");
+}
+
+// ─── RSA Keypair Management for JWKS & RS256 ─────────────────
+const RSA_KEY_ID = "authhub-rsa-2026";
+let rsaPrivateKey: crypto.KeyObject;
+let rsaPublicKey: crypto.KeyObject;
+
+function initRsaKeypair() {
+  const keyFilePath = path.resolve(process.cwd(), "data", "rsa-keys.json");
+  const dirname = path.dirname(keyFilePath);
+  if (!fs.existsSync(dirname)) {
+    fs.mkdirSync(dirname, { recursive: true });
+  }
+
+  if (fs.existsSync(keyFilePath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(keyFilePath, "utf-8"));
+      rsaPrivateKey = crypto.createPrivateKey(data.privateKeyPem);
+      rsaPublicKey = crypto.createPublicKey(data.publicKeyPem);
+      return;
+    } catch {
+      // Regenerate if corrupted
+    }
+  }
+
+  const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  });
+
+  fs.writeFileSync(
+    keyFilePath,
+    JSON.stringify({ privateKeyPem: privateKey, publicKeyPem: publicKey }, null, 2),
+    "utf-8"
+  );
+
+  rsaPrivateKey = crypto.createPrivateKey(privateKey);
+  rsaPublicKey = crypto.createPublicKey(publicKey);
+}
+
+initRsaKeypair();
+
+export function getPublicJwks() {
+  const jwk = rsaPublicKey.export({ format: "jwk" });
+  return {
+    keys: [
+      {
+        ...jwk,
+        kid: RSA_KEY_ID,
+        use: "sig",
+        alg: "RS256",
+      },
+    ],
+  };
 }
 
 export function hashPassword(password: string): string {
@@ -49,6 +106,7 @@ export interface JwtPayload {
   clientId?: string;
   clientSlug?: string;
   appRole?: string;
+  permissions?: string[];
   scopes?: string[];
   sid: string;
   iat?: number;
@@ -63,20 +121,20 @@ export function signJwt(
   const now = Math.floor(Date.now() / 1000);
   const fullPayload: JwtPayload = {
     ...payload,
-    iss: process.env.AUTH_HUB_ISSUER || "auth-hub.josapratama.com",
+    iss: process.env.AUTH_HUB_ISSUER || "https://auth.josapratama.com",
     iat: now,
     exp: now + expiresInSeconds,
   };
 
-  const header = { alg: "HS256", typ: "JWT" };
+  const header = { alg: "RS256", typ: "JWT", kid: RSA_KEY_ID };
   const encodedHeader = base64UrlEncode(JSON.stringify(header));
   const encodedPayload = base64UrlEncode(JSON.stringify(fullPayload));
   const signatureInput = `${encodedHeader}.${encodedPayload}`;
 
-  const signature = crypto
-    .createHmac("sha256", JWT_SECRET)
-    .update(signatureInput)
-    .digest();
+  const signer = crypto.createSign("RSA-SHA256");
+  signer.update(signatureInput);
+  signer.end();
+  const signature = signer.sign(rsaPrivateKey);
 
   return `${signatureInput}.${base64UrlEncode(signature)}`;
 }
@@ -92,14 +150,26 @@ export function verifyJwt(token: string): {
       return { valid: false, error: "Malformed JWT structure" };
     }
 
-    const [encodedHeader, encodedPayload, signature] = parts;
+    const [encodedHeader, encodedPayload, signatureB64] = parts;
+    const header = JSON.parse(base64UrlDecode(encodedHeader));
     const signatureInput = `${encodedHeader}.${encodedPayload}`;
-    const expectedSig = base64UrlEncode(
-      crypto.createHmac("sha256", JWT_SECRET).update(signatureInput).digest()
-    );
+    const signature = Buffer.from(signatureB64.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 
-    if (signature !== expectedSig) {
-      return { valid: false, error: "Invalid JWT cryptographic signature" };
+    if (header.alg === "RS256") {
+      const verifier = crypto.createVerify("RSA-SHA256");
+      verifier.update(signatureInput);
+      verifier.end();
+      if (!verifier.verify(rsaPublicKey, signature)) {
+        return { valid: false, error: "Invalid RS256 cryptographic signature" };
+      }
+    } else {
+      // Fallback for HS256 tokens
+      const expectedSig = base64UrlEncode(
+        crypto.createHmac("sha256", JWT_SECRET).update(signatureInput).digest()
+      );
+      if (signatureB64 !== expectedSig) {
+        return { valid: false, error: "Invalid HS256 signature" };
+      }
     }
 
     const payload: JwtPayload = JSON.parse(base64UrlDecode(encodedPayload));
@@ -115,9 +185,6 @@ export function verifyJwt(token: string): {
   }
 }
 
-/**
- * Generates a current 6-digit TOTP code from a hex/ascii secret (30-second window)
- */
 export function generateTotpCode(secret: string, windowOffset = 0): string {
   const counter = Math.floor(Date.now() / 1000 / 30) + windowOffset;
   const buf = Buffer.alloc(8);
@@ -143,4 +210,3 @@ export function verifyTotpCode(secret: string, code: string): boolean {
   }
   return false;
 }
-
