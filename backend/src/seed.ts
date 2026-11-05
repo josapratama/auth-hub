@@ -55,7 +55,9 @@ export function createInitialData(): AuthHubSchema {
       clientSecret: "ah_secret_notifybridge_9f8e7d6c5b4a3f2e1d0c9b",
       redirectUris: [
         "https://notify.josapratama.com/auth/callback",
+        "http://localhost:3000/auth/callback",
         "http://localhost:4200/auth/callback",
+        "http://localhost:4201/auth/callback",
       ],
       homepageUrl: "http://localhost:4200",
       techStack: "Angular 18 + Express TS",

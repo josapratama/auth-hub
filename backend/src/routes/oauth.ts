@@ -44,11 +44,10 @@ oauthRouter.get("/oauth/authorize", (req: Request, res: Response) => {
   const { client_id, client_slug, redirect_uri, response_type, state, scope } = req.query;
   const client =
     db.getClientBySlugOrId(String(client_id || "")) ||
-    db.getClientBySlugOrId(String(client_slug || "")) ||
-    db.getClientBySlugOrId("guidepath");
+    db.getClientBySlugOrId(String(client_slug || ""));
 
   if (!client) {
-    return res.status(404).send("Error: OAuth2 Client Application not registered in AuthHub");
+    return res.status(404).send(`Error: Client application '${client_id || client_slug || ""}' tidak terdaftar di AuthHub.`);
   }
 
   const targetRedirect = String(redirect_uri || client.redirectUris[0]);

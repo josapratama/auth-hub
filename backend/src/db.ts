@@ -59,39 +59,31 @@ export class AuthHubDatabase {
         (a) => a.id !== "aud_init_1" && a.id !== "aud_init_2"
       );
 
-      // Ensure guidepath client exists
-      if (!parsed.clients.some((c) => c.slug === "guidepath")) {
-        const now = new Date().toISOString();
-        parsed.clients.push({
-          id: "app_guidepath",
-          name: "GuidePath Thesis & AI Research",
-          slug: "guidepath",
-          description: "Thesis Guidance Platform, Milestone Tracking, AI Research Gap & SINTA Journal Indexer",
-          icon: "🎓",
-          clientId: "ah_client_guidepath_7f8a9b",
-          clientSecret: "ah_secret_guidepath_4c5d6e7f8a9b0c1d2e3f4a",
-          redirectUris: [
-            "https://guidepath.josapratama.com/auth/callback",
-            "http://localhost:8000/auth/callback",
-          ],
-          homepageUrl: "https://guidepath.josapratama.com",
-          techStack: "Laravel 11 + Inertia React",
-          require2FA: false,
-          isActive: true,
-          backchannelLogoutUri: "https://guidepath.josapratama.com/api/sso/logout-callback",
-          availablePermissions: [
-            "guidepath:thesis_approve",
-            "guidepath:journal_upload",
-            "guidepath:milestone_edit",
-            "guidepath:export_reports",
-          ],
-          createdAt: now,
-          updatedAt: now,
-        });
+      // Ensure all standard ecosystem clients from seed exist in database
+      const initial = createInitialData();
+      for (const defaultClient of initial.clients) {
+        const existingIdx = parsed.clients.findIndex(
+          (c) => c.slug === defaultClient.slug || c.clientId === defaultClient.clientId
+        );
+        if (existingIdx === -1) {
+          console.log(`[AuthHub DB] Auto-migrating missing client '${defaultClient.name}' (${defaultClient.slug}) into database...`);
+          parsed.clients.push(defaultClient);
+        } else {
+          // Keep redirectUris up to date
+          for (const uri of defaultClient.redirectUris) {
+            if (!parsed.clients[existingIdx].redirectUris.includes(uri)) {
+              parsed.clients[existingIdx].redirectUris.push(uri);
+            }
+          }
+        }
+      }
 
-        const root = parsed.users.find((u) => u.id === "usr_josa_root");
-        if (root && root.appRoles) {
-          root.appRoles.guidepath = "superadmin";
+      const root = parsed.users.find((u) => u.id === "usr_josa_root" || u.email.includes("josapratama"));
+      if (root && root.appRoles) {
+        for (const c of parsed.clients) {
+          if (!root.appRoles[c.slug]) {
+            root.appRoles[c.slug] = "superadmin";
+          }
         }
       }
 
