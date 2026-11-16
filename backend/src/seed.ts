@@ -118,6 +118,8 @@ export function createInitialData(): AuthHubSchema {
       redirectUris: [
         "https://wa.josapratama.com/auth/callback",
         "http://localhost:5002/auth/callback",
+        "http://localhost:5173/auth/callback",
+        "http://127.0.0.1:5173/auth/callback",
       ],
       homepageUrl: "https://wa.josapratama.com",
       techStack: "Next.js + Baileys Node API",
